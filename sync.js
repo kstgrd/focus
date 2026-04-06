@@ -2,27 +2,7 @@
 (function () {
   const PEER_PREFIX = 'pomodorotimer-';
   const SYNC_STORAGE_KEY = 'pomodoro-sync-key';
-
-  // Chrome hides local IPs behind mDNS (.local) for privacy.
-  // Remote peers can't resolve these, so same-LAN WebRTC fails
-  // without a TURN relay fallback.
-  const PEER_CONFIG = {
-    debug: 0,
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        {
-          urls: [
-            'turn:openrelay.metered.ca:80',
-            'turn:openrelay.metered.ca:443',
-            'turns:openrelay.metered.ca:443'
-          ],
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ]
-    }
-  };
+  const SYNC_SERVER_KEY = 'pomodoro-sync-server';
 
   let peer = null;
   let connections = [];
@@ -40,8 +20,12 @@
   const $status = document.getElementById('sync-status');
   const $indicator = document.getElementById('sync-indicator');
   const $inputGroup = document.getElementById('sync-input-group');
+  const $syncServer = document.getElementById('sync-server');
   const $desc = document.getElementById('sync-desc');
   const $backdrop = $modal.querySelector('.modal-backdrop');
+
+  // Load saved server
+  $syncServer.value = localStorage.getItem(SYNC_SERVER_KEY) || '';
 
   // Events
   $syncBtn.addEventListener('click', openModal);
@@ -53,6 +37,41 @@
 
   // Listen for local state changes to broadcast
   window.app.onStateChange(broadcastToAll);
+
+  function getPeerConfig() {
+    const server = $syncServer.value.trim();
+    if (server) {
+      // Self-hosted PeerJS server on LAN — no TURN/STUN needed
+      localStorage.setItem(SYNC_SERVER_KEY, server);
+      const [host, port] = server.split(':');
+      return {
+        debug: 0,
+        host: host,
+        port: parseInt(port, 10) || 9000,
+        path: '/',
+        secure: false
+      };
+    }
+    // Public PeerJS cloud with TURN fallback
+    localStorage.removeItem(SYNC_SERVER_KEY);
+    return {
+      debug: 0,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          {
+            urls: [
+              'turn:openrelay.metered.ca:80',
+              'turn:openrelay.metered.ca:443',
+              'turns:openrelay.metered.ca:443'
+            ],
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
+    };
+  }
 
   function openModal() {
     $modal.classList.remove('hidden');
@@ -89,7 +108,7 @@
     cleanup();
     console.log('[sync] tryAsHost', hostId);
 
-    peer = new Peer(hostId, PEER_CONFIG);
+    peer = new Peer(hostId, getPeerConfig());
 
     peer.on('open', id => {
       console.log('[sync] host open, id=', id);
@@ -127,7 +146,7 @@
     cleanup();
     const clientId = hostId + '-' + Math.random().toString(36).slice(2, 8);
     console.log('[sync] tryAsClient', clientId, '-> host', hostId);
-    peer = new Peer(clientId, PEER_CONFIG);
+    peer = new Peer(clientId, getPeerConfig());
 
     peer.on('open', id => {
       console.log('[sync] client open, id=', id);

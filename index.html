@@ -137,9 +137,10 @@
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <h2>P2P Sync</h2>
-      <p class="modal-desc" id="sync-desc">Connect devices on your local network using a shared secret key. Uses WebRTC peer-to-peer — no server stores your data.</p>
+      <p class="modal-desc" id="sync-desc">Connect devices using a shared secret key. For LAN sync, run <code>npx peerjs --port 9000</code> and enter the server address below.</p>
       <div class="input-group" id="sync-input-group">
         <input type="text" id="sync-key" placeholder="Enter secret key..." autocomplete="off" spellcheck="false">
+        <input type="text" id="sync-server" placeholder="PeerJS server (e.g. 192.168.1.5:9000)" autocomplete="off" spellcheck="false">
       </div>
       <div id="sync-status" class="sync-status"></div>
       <div class="modal-actions">
