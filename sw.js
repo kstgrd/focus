@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pomodoro-v4';
+const CACHE_NAME = 'pomodoro-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -24,6 +24,7 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   e.respondWith(
     fetch(e.request)
       .then(r => {
