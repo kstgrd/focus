@@ -176,11 +176,35 @@
 
   function handleIncoming(conn) {
     console.log('[sync] handleIncoming from', conn.peer, 'open=', conn.open);
+
+    // ICE diagnostics: monitor why connection might fail
+    const iceCheck = setInterval(() => {
+      const pc = conn.peerConnection;
+      if (!pc) return;
+      clearInterval(iceCheck);
+      console.log('[sync] ICE initial:', pc.iceConnectionState, 'gathering:', pc.iceGatheringState);
+      pc.addEventListener('iceconnectionstatechange', () => {
+        console.log('[sync] ICE:', pc.iceConnectionState);
+      });
+      pc.addEventListener('icecandidate', e => {
+        if (e.candidate) {
+          console.log('[sync] ICE candidate:', e.candidate.type, e.candidate.protocol, e.candidate.address);
+        } else {
+          console.log('[sync] ICE gathering complete');
+        }
+      });
+    }, 50);
+
     conn.on('open', () => {
+      clearInterval(iceCheck);
       console.log('[sync] incoming data channel OPEN from', conn.peer);
       setupConnection(conn);
-      // Send full sync to new peer immediately
       conn.send({ type: 'full-sync', data: window.app.getState() });
+    });
+
+    conn.on('error', err => {
+      clearInterval(iceCheck);
+      console.log('[sync] incoming conn error:', err);
     });
   }
 
