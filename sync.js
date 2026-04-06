@@ -96,7 +96,7 @@
       // Immediately try to restore signaling so incoming connections still work
       if (peer && !peer.destroyed) {
         console.log('[sync] host: attempting immediate signaling reconnect');
-        try { peer.reconnect(); } catch (e) {}
+        try { peer.reconnect(); } catch (e) { }
       }
       scheduleReconnect();
     });
@@ -149,7 +149,7 @@
       // Immediately try to restore signaling so ICE negotiation can continue
       if (peer && !peer.destroyed) {
         console.log('[sync] client: attempting immediate signaling reconnect');
-        try { peer.reconnect(); } catch (e) {}
+        try { peer.reconnect(); } catch (e) { }
       }
       scheduleReconnect();
     });
@@ -218,7 +218,7 @@
     const had = connections.length;
     connections = connections.filter(c => c !== conn);
     if (connections.length === had) return; // already removed
-    try { conn.close(); } catch (e) {}
+    try { conn.close(); } catch (e) { }
     updateConnectionStatus();
     handleConnectionLost();
   }
@@ -245,9 +245,9 @@
 
   function cleanup() {
     clearTimeout(reconnectTimeout);
-    connections.forEach(c => { try { c.close(); } catch (e) {} });
+    connections.forEach(c => { try { c.close(); } catch (e) { } });
     connections = [];
-    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+    if (peer) { try { peer.destroy(); } catch (e) { } peer = null; }
     isHost = false;
   }
 
