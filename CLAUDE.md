@@ -14,6 +14,7 @@
   1. Immediately call `peer.reconnect()` to restore signaling (needed for ICE negotiation)
   2. Schedule a fallback (8s) that only does full teardown if BOTH signaling and data channels are down
   3. Never tear down active data channels just because signaling dropped
+- **Critical**: Do NOT override PeerJS's default ICE servers with STUN-only. PeerJS defaults include a TURN relay which is required for same-LAN PCs (where STUN fails because both peers share the same NAT-reflected IP and Chrome's mDNS candidates don't resolve cross-machine)
 
 ## State Management (`app.js`)
 - Timer state stored in `localStorage` under key `pomodoro-state`
