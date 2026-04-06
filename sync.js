@@ -165,4 +165,23 @@
   if (savedHash) {
     startSync(savedHash);
   }
+
+  // Reconnect on wake (phone screen on) or network restored
+  function checkConnection() {
+    if (!topic) return;
+    const hash = localStorage.getItem(SYNC_KEY_STORAGE);
+    if (!hash) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.log('[sync] stale connection, reconnecting');
+      startSync(hash);
+    } else {
+      // Connection alive — re-broadcast state so peers know we're back
+      broadcast(window.app.getState());
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkConnection();
+  });
+  window.addEventListener('online', checkConnection);
 })();
