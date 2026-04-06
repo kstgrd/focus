@@ -7,6 +7,7 @@
   let ws = null;
   let topic = '';
   let senderId = '';
+  let connectedSince = 0;
   let reconnectTimeout = null;
 
   // DOM
@@ -49,15 +50,16 @@
     cleanup();
     topic = TOPIC_PREFIX + hash;
     senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
+    connectedSince = Date.now();
 
     setStatus('Connecting...');
     setIndicator('connecting');
     $indicator.classList.remove('hidden');
     $connectBtn.disabled = true;
 
-    // Subscribe via WebSocket — since=30m replays recent messages on connect
+    // Subscribe via WebSocket — since=10s catches recent live messages, avoids stale replays
     const wsUrl = NTFY_BASE.replace('https:', 'wss:').replace('http:', 'ws:')
-      + '/' + topic + '/ws?since=30m';
+      + '/' + topic + '/ws?since=10s';
 
     ws = new WebSocket(wsUrl);
 
@@ -65,7 +67,6 @@
       setStatus('Connected — syncing', 'connected');
       setIndicator('connected');
       showConnected();
-      // Publish current state so other peers get it
       broadcast(window.app.getState());
     };
 
@@ -75,7 +76,13 @@
         if (ntfyMsg.event !== 'message') return;
         const msg = JSON.parse(ntfyMsg.message);
         if (msg._sender === senderId) return;
-        if (msg.data) {
+        if (!msg.data) return;
+
+        // Sender connected before us → they're the authority, force-apply
+        if (msg._connectedSince && msg._connectedSince < connectedSince) {
+          window.app.forceApplyRemoteState(msg.data);
+        } else {
+          // Sender connected after us → only apply if lastUpdate is newer
           window.app.applyRemoteState(msg.data);
         }
       } catch (err) {}
@@ -99,6 +106,7 @@
     if (!topic) return;
     const body = JSON.stringify({
       _sender: senderId,
+      _connectedSince: connectedSince,
       data: stateSnapshot
     });
     fetch(NTFY_BASE + '/' + topic, {
