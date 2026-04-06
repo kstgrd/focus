@@ -85,10 +85,19 @@
 
     peer.on('open', () => {
       isHost = false;
+      setStatus('Connecting to host...', '');
       const conn = peer.connect(hostId, { reliable: true });
-      setupConnection(conn);
-      setStatus('Connected to host', 'connected');
-      showConnected();
+
+      conn.on('open', () => {
+        setupConnection(conn);
+        setStatus('Connected to host', 'connected');
+        showConnected();
+      });
+
+      conn.on('error', err => {
+        setStatus('Connection failed: ' + err.message, 'error');
+        $connectBtn.disabled = false;
+      });
     });
 
     peer.on('error', err => {
@@ -110,8 +119,8 @@
   }
 
   function handleIncoming(conn) {
-    setupConnection(conn);
     conn.on('open', () => {
+      setupConnection(conn);
       conn.send({ type: 'state', data: window.app.getState() });
     });
   }
