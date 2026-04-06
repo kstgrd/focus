@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx serve:*)"
+      "Bash(npx serve:*)",
+      "Bash(mkdir:*)",
+      "Bash(gh api:*)"
     ]
   }
 }

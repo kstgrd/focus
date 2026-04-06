@@ -79,7 +79,13 @@
 
     peer.on('disconnected', () => {
       console.log('[sync] host peer disconnected from signaling');
-      if (secretKey) scheduleReconnect();
+      if (!secretKey) return;
+      // Immediately try to restore signaling so incoming connections still work
+      if (peer && !peer.destroyed) {
+        console.log('[sync] host: attempting immediate signaling reconnect');
+        try { peer.reconnect(); } catch (e) {}
+      }
+      scheduleReconnect();
     });
   }
 
@@ -122,7 +128,13 @@
 
     peer.on('disconnected', () => {
       console.log('[sync] client peer disconnected from signaling');
-      if (secretKey) scheduleReconnect();
+      if (!secretKey) return;
+      // Immediately try to restore signaling so ICE negotiation can continue
+      if (peer && !peer.destroyed) {
+        console.log('[sync] client: attempting immediate signaling reconnect');
+        try { peer.reconnect(); } catch (e) {}
+      }
+      scheduleReconnect();
     });
 
     peer.on('connection', handleIncoming);
@@ -193,19 +205,23 @@
 
   function scheduleReconnect() {
     clearTimeout(reconnectTimeout);
+    // Give enough time for the immediate reconnect + ICE negotiation to work
     reconnectTimeout = setTimeout(() => {
       if (!secretKey) return;
-      const activeConns = connections.filter(c => c.open).length;
-      console.log('[sync] scheduleReconnect, activeConns=', activeConns);
-      if (peer && activeConns > 0) {
-        console.log('[sync] reconnecting signaling only (data channels alive)');
-        try { peer.reconnect(); } catch (e) {}
+      // If signaling reconnected successfully, nothing to do
+      if (peer && peer.open) {
+        console.log('[sync] scheduleReconnect: signaling already restored, no action');
         return;
       }
-      console.log('[sync] full reconnect');
+      const activeConns = connections.filter(c => c.open).length;
+      if (activeConns > 0) {
+        console.log('[sync] scheduleReconnect: data channels alive, skipping teardown');
+        return;
+      }
+      console.log('[sync] scheduleReconnect: full reconnect (signaling + data both down)');
       setStatus('Reconnecting...');
       tryAsHost(PEER_PREFIX + hashKey(secretKey));
-    }, 3000);
+    }, 8000);
   }
 
   function showConnected() {
