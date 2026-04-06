@@ -10,7 +10,10 @@
 - First peer to connect with a key becomes host; subsequent peers become clients
 - Host relays state changes to all connected peers
 - **Critical**: All PeerJS data connections must wait for `conn.on('open')` before calling `setupConnection()` — both in `handleIncoming` (host side) and `tryAsClient` (client side)
-- PeerJS `disconnected` event = signaling server drop, NOT data channel drop. Don't tear down active WebRTC connections on signaling disconnect.
+- **Critical**: PeerJS `disconnected` event = signaling server drop, NOT data channel drop. On disconnect:
+  1. Immediately call `peer.reconnect()` to restore signaling (needed for ICE negotiation)
+  2. Schedule a fallback (8s) that only does full teardown if BOTH signaling and data channels are down
+  3. Never tear down active data channels just because signaling dropped
 
 ## State Management (`app.js`)
 - Timer state stored in `localStorage` under key `pomodoro-state`
