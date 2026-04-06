@@ -178,10 +178,16 @@
   function scheduleReconnect() {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = setTimeout(() => {
-      if (secretKey) {
-        setStatus('Reconnecting...');
-        tryAsHost(PEER_PREFIX + hashKey(secretKey));
+      if (!secretKey) return;
+      // If we still have active data connections, just try to reconnect
+      // the signaling server without tearing down working WebRTC channels
+      const activeConns = connections.filter(c => c.open).length;
+      if (peer && activeConns > 0) {
+        try { peer.reconnect(); } catch (e) {}
+        return;
       }
+      setStatus('Reconnecting...');
+      tryAsHost(PEER_PREFIX + hashKey(secretKey));
     }, 3000);
   }
 
