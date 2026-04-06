@@ -1,7 +1,11 @@
 // --- Sync via MQTT over WebSocket ---
 (function () {
   const SYNC_KEY_STORAGE = 'pomodoro-sync-key';
-  const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
+  const BROKERS = [
+    'wss://broker.hivemq.com:8884/mqtt',
+    'wss://broker.emqx.io:8084/mqtt',
+    'wss://test.mosquitto.org:8081/mqtt'
+  ];
   const TOPIC_PREFIX = 'pomodoro-timer/';
 
   let client = null;
@@ -128,24 +132,66 @@
     startMqtt();
   }
 
+  let brokerIndex = 0;
+
   function startMqtt() {
-    client = mqtt.connect(BROKER_URL, {
+    if (client) { try { client.end(true); } catch(e) {} client = null; }
+
+    const url = BROKERS[brokerIndex];
+    setStatus('Trying ' + new URL(url).hostname + '...', '');
+
+    client = mqtt.connect(url, {
       clientId: clientId,
       clean: true,
       keepalive: 30,
-      reconnectPeriod: 3000
+      connectTimeout: 5000,
+      reconnectPeriod: 0 // we handle reconnect manually for fallback
     });
 
+    const timeout = setTimeout(() => {
+      // Broker didn't connect in time, try next
+      tryNextBroker();
+    }, 6000);
+
     client.on('connect', () => {
-      setStatus('Connected — syncing', 'connected');
+      clearTimeout(timeout);
+      const host = new URL(url).hostname;
+      setStatus('Connected via ' + host, 'connected');
       showConnected();
       client.subscribe(topic);
       broadcast(window.app.getState());
+
+      // Now enable auto-reconnect to this working broker
+      client.options.reconnectPeriod = 3000;
     });
 
     client.on('message', onMessage);
-    client.on('error', err => { setStatus('Error: ' + err.message, 'error'); setIndicator('error'); });
-    client.on('reconnect', () => { setStatus('Reconnecting...', ''); setIndicator('connecting'); });
-    client.on('offline', () => { setStatus('Offline', 'error'); setIndicator('error'); });
+
+    client.on('error', () => {
+      clearTimeout(timeout);
+      tryNextBroker();
+    });
+
+    client.on('close', () => {
+      if (client && client.options.reconnectPeriod > 0) {
+        // Auto-reconnect is active, just update status
+        setStatus('Reconnecting...', '');
+        setIndicator('connecting');
+      }
+    });
+  }
+
+  function tryNextBroker() {
+    if (client) { try { client.end(true); } catch(e) {} client = null; }
+    brokerIndex++;
+    if (brokerIndex < BROKERS.length) {
+      startMqtt();
+    } else {
+      // All brokers failed, restart from first after delay
+      brokerIndex = 0;
+      setStatus('All brokers failed — retrying...', 'error');
+      setIndicator('error');
+      setTimeout(startMqtt, 5000);
+    }
   }
 })();
