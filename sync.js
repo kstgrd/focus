@@ -58,6 +58,7 @@
     const hostId = PEER_PREFIX + hash;
 
     setStatus('Connecting...');
+    setIndicator('connecting');
     $connectBtn.disabled = true;
     tryAsHost(hostId);
   }
@@ -72,6 +73,7 @@
       console.log('[sync] host open, id=', id);
       isHost = true;
       setStatus('Connected as host. Waiting for peers...', 'connected');
+      setIndicator('host');
       showConnected();
       peer.on('connection', handleIncoming);
     });
@@ -83,6 +85,7 @@
         tryAsClient(hostId);
       } else {
         setStatus('Error: ' + err.message, 'error');
+        setIndicator('error');
         $connectBtn.disabled = false;
       }
     });
@@ -113,15 +116,16 @@
       conn.on('open', () => {
         console.log('[sync] client data channel OPEN to host');
         setupConnection(conn);
-        // Ask host for current state
         conn.send({ type: 'request-state' });
         setStatus('Connected to host', 'connected');
+        setIndicator('peer');
         showConnected();
       });
 
       conn.on('error', err => {
         console.log('[sync] client conn error', err);
         setStatus('Connection failed: ' + err.message, 'error');
+        setIndicator('error');
         $connectBtn.disabled = false;
       });
     });
@@ -134,6 +138,7 @@
         tryAsHost(PEER_PREFIX + secretKey);
       } else {
         setStatus('Error: ' + err.message, 'error');
+        setIndicator('error');
         $connectBtn.disabled = false;
       }
     });
@@ -228,7 +233,7 @@
     localStorage.removeItem(SYNC_STORAGE_KEY);
     cleanup();
     setStatus('Disconnected');
-    $indicator.classList.add('hidden');
+    setIndicator(null);
     // Restore input UI
     $inputGroup.classList.remove('hidden');
     $desc.classList.remove('hidden');
@@ -250,6 +255,7 @@
     if (isHost || connections.length > 0 || !secretKey) return;
     console.log('[sync] lost all connections, reconnecting in 2s...');
     setStatus('Host disconnected. Reconnecting...', '');
+    setIndicator('connecting');
     clearTimeout(reconnectTimeout);
     reconnectTimeout = setTimeout(() => {
       if (!secretKey) return;
@@ -275,12 +281,12 @@
       }
       console.log('[sync] scheduleReconnect: full reconnect (signaling + data both down)');
       setStatus('Reconnecting...');
+      setIndicator('connecting');
       tryAsHost(PEER_PREFIX + secretKey);
     }, 8000);
   }
 
   function showConnected() {
-    $indicator.classList.remove('hidden');
     // Hide input, show only disconnect
     $inputGroup.classList.add('hidden');
     $desc.classList.add('hidden');
@@ -294,18 +300,21 @@
     if (peer && peer.open) {
       if (isHost) {
         setStatus(`Host \u2014 ${active} peer${active !== 1 ? 's' : ''} connected`, 'connected');
+        setIndicator('host');
       } else {
         setStatus(active > 0 ? 'Connected to host' : 'Connecting...', active > 0 ? 'connected' : '');
+        setIndicator(active > 0 ? 'peer' : 'connecting');
       }
-      $indicator.classList.remove('hidden');
-    } else {
-      $indicator.classList.add('hidden');
     }
   }
 
   function setStatus(text, cls) {
     $status.textContent = text;
     $status.className = 'sync-status' + (cls ? ' ' + cls : '');
+  }
+
+  function setIndicator(type) {
+    $indicator.className = 'sync-indicator' + (type ? ' ' + type : ' hidden');
   }
 
   function hashKey(key) {
