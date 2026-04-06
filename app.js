@@ -66,7 +66,7 @@ const $settingsBackdrop = $settingsModal.querySelector('.modal-backdrop');
 window.app = {
   onStateChange: function(cb) { stateChangeCallbacks.push(cb); },
   applyRemoteState: applyRemoteState,
-  getState: function() { return { ...state }; }
+  getState: function() { return { ...state, settings: { ...settings } }; }
 };
 
 // --- Init ---
@@ -613,7 +613,7 @@ function loadSettings() {
 
 function broadcastState() {
   saveState();
-  const snapshot = { ...state };
+  const snapshot = { ...state, settings: { ...settings } };
   stateChangeCallbacks.forEach(cb => cb(snapshot));
   updateUI();
 }
@@ -748,6 +748,18 @@ function applyRemoteState(remote) {
   state.completedBreaks = remote.completedBreaks;
   state.date = remote.date;
   state.lastUpdate = remote.lastUpdate;
+
+  // Apply settings if included
+  if (remote.settings) {
+    const s = remote.settings;
+    if (s.goal >= 1 && s.goal <= 20) settings.goal = s.goal;
+    if (s.focusMin >= 1 && s.focusMin <= 120) settings.focusMin = s.focusMin;
+    if (s.breakMin >= 1 && s.breakMin <= 30) settings.breakMin = s.breakMin;
+    if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
+    if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
+    saveSettings();
+    buildSegments();
+  }
 
   if (state.isRunning && !wasRunning) {
     startTicking();
