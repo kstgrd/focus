@@ -41,59 +41,27 @@
       return;
     }
 
-    localStorage.setItem(SYNC_KEY_STORAGE, key);
-    topic = TOPIC_PREFIX + hashKey(key);
+    const hash = hashKey(key);
+    localStorage.setItem(SYNC_KEY_STORAGE, hash);
+    topic = TOPIC_PREFIX + hash;
     clientId = 'pomo-' + Math.random().toString(36).slice(2, 10);
 
     setStatus('Connecting...');
+    setIndicator('connecting');
+    $indicator.classList.remove('hidden');
     $connectBtn.disabled = true;
+    startMqtt();
+  }
 
-    client = mqtt.connect(BROKER_URL, {
-      clientId: clientId,
-      clean: true,
-      keepalive: 30,
-      reconnectPeriod: 3000
-    });
-
-    client.on('connect', () => {
-      setStatus('Connected — syncing', 'connected');
-      showConnected();
-
-      // Subscribe to the shared topic
-      client.subscribe(topic);
-
-      // Publish current state as retained so new joiners get it
-      broadcast(window.app.getState());
-    });
-
-    client.on('message', (t, payload) => {
-      if (t !== topic) return;
-      if (ignoreNext) { ignoreNext = false; return; }
-
-      try {
-        const msg = JSON.parse(payload.toString());
-        // Ignore our own messages
-        if (msg._sender === clientId) return;
-        if (msg.data) {
-          window.app.applyRemoteState(msg.data);
-        }
-      } catch (e) {}
-    });
-
-    client.on('error', err => {
-      setStatus('Error: ' + err.message, 'error');
-      setIndicator('error');
-    });
-
-    client.on('reconnect', () => {
-      setStatus('Reconnecting...', '');
-      setIndicator('connecting');
-    });
-
-    client.on('offline', () => {
-      setStatus('Offline', 'error');
-      setIndicator('error');
-    });
+  function onMessage(t, payload) {
+    if (t !== topic) return;
+    try {
+      const msg = JSON.parse(payload.toString());
+      if (msg._sender === clientId) return;
+      if (msg.data) {
+        window.app.applyRemoteState(msg.data);
+      }
+    } catch (e) {}
   }
 
   function broadcast(stateSnapshot) {
@@ -135,7 +103,7 @@
   }
 
   function setIndicator(state) {
-    $indicator.classList.remove('hidden', 'host', 'peer', 'connecting', 'error');
+    $indicator.classList.remove('hidden', 'connected', 'connecting', 'error');
     if (state) $indicator.classList.add(state);
   }
 
@@ -147,10 +115,37 @@
     return Math.abs(hash).toString(36);
   }
 
-  // Auto-connect on load
-  const savedKey = localStorage.getItem(SYNC_KEY_STORAGE);
-  if (savedKey) {
-    $syncKey.value = savedKey;
-    connect();
+  // Auto-connect on load using stored hash
+  const savedHash = localStorage.getItem(SYNC_KEY_STORAGE);
+  if (savedHash) {
+    topic = TOPIC_PREFIX + savedHash;
+    clientId = 'pomo-' + Math.random().toString(36).slice(2, 10);
+
+    setStatus('Connecting...');
+    setIndicator('connecting');
+    $indicator.classList.remove('hidden');
+    $connectBtn.disabled = true;
+    startMqtt();
+  }
+
+  function startMqtt() {
+    client = mqtt.connect(BROKER_URL, {
+      clientId: clientId,
+      clean: true,
+      keepalive: 30,
+      reconnectPeriod: 3000
+    });
+
+    client.on('connect', () => {
+      setStatus('Connected — syncing', 'connected');
+      showConnected();
+      client.subscribe(topic);
+      broadcast(window.app.getState());
+    });
+
+    client.on('message', onMessage);
+    client.on('error', err => { setStatus('Error: ' + err.message, 'error'); setIndicator('error'); });
+    client.on('reconnect', () => { setStatus('Reconnecting...', ''); setIndicator('connecting'); });
+    client.on('offline', () => { setStatus('Offline', 'error'); setIndicator('error'); });
   }
 })();

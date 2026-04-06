@@ -87,15 +87,16 @@ header h1 {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--break);
   animation: pulse 2s infinite;
   pointer-events: none;
   z-index: 1;
 }
 
 .sync-indicator.hidden { display: none; }
-.sync-indicator.connected { background: var(--break); }
+.sync-indicator.connected { background: var(--break); animation: none; }
 .sync-indicator.connecting { background: #f39c12; }
+.sync-indicator.server { background: #2ecc71; }
+.sync-indicator.peer { background: #3498db; }
 .sync-indicator.error { background: var(--danger); }
 
 @keyframes pulse {
