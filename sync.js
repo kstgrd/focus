@@ -3,19 +3,15 @@
   const PEER_PREFIX = 'pomodorotimer-';
   const SYNC_STORAGE_KEY = 'pomodoro-sync-key';
 
-  // ICE servers for cross-OS desktop WebRTC (mDNS fails between Windows/macOS)
+  // ICE servers for WebRTC connectivity
+  // For LAN: set chrome://flags/#webrtc-ip-handling-policy to 'Default' on desktops
   const PEER_CONFIG = {
     debug: 0,
     config: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        {
-          urls: 'turn:0.peerjs.com:3478',
-          username: 'peerjs',
-          credential: 'peerjsp'
-        }
+        { urls: 'stun:stun2.l.google.com:19302' }
       ]
     }
   };
