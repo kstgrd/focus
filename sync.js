@@ -12,6 +12,7 @@
   let topic = '';
   let clientId = '';
   let ignoreNext = false;
+  let brokerIndex = 0;
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -131,8 +132,6 @@
     $connectBtn.disabled = true;
     startMqtt();
   }
-
-  let brokerIndex = 0;
 
   function startMqtt() {
     if (client) { try { client.end(true); } catch(e) {} client = null; }
