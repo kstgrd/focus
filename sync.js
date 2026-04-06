@@ -1,18 +1,13 @@
-// --- Sync via MQTT over WebSocket ---
+// --- Sync via ntfy.sh (WebSocket subscribe + HTTP publish) ---
 (function () {
   const SYNC_KEY_STORAGE = 'pomodoro-sync-key';
-  const BROKERS = [
-    'wss://broker.hivemq.com:8884/mqtt',
-    'wss://broker.emqx.io:8084/mqtt',
-    'wss://test.mosquitto.org:8081/mqtt'
-  ];
-  const TOPIC_PREFIX = 'pomodoro-timer/';
+  const NTFY_BASE = 'https://ntfy.sh';
+  const TOPIC_PREFIX = 'pomodoro-timer-';
 
-  let client = null;
+  let ws = null;
   let topic = '';
-  let clientId = '';
-  let ignoreNext = false;
-  let brokerIndex = 0;
+  let senderId = '';
+  let reconnectTimeout = null;
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -28,7 +23,7 @@
   // Events
   $syncBtn.addEventListener('click', () => {
     $modal.classList.remove('hidden');
-    if (!client) $syncKey.focus();
+    if (!ws) $syncKey.focus();
   });
   $closeBtn.addEventListener('click', () => $modal.classList.add('hidden'));
   $backdrop.addEventListener('click', () => $modal.classList.add('hidden'));
@@ -36,7 +31,6 @@
   $disconnectBtn.addEventListener('click', disconnect);
   $syncKey.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 
-  // Listen for local state changes
   window.app.onStateChange(broadcast);
 
   function connect() {
@@ -48,43 +42,73 @@
 
     const hash = hashKey(key);
     localStorage.setItem(SYNC_KEY_STORAGE, hash);
+    startSync(hash);
+  }
+
+  function startSync(hash) {
+    cleanup();
     topic = TOPIC_PREFIX + hash;
-    clientId = 'pomo-' + Math.random().toString(36).slice(2, 10);
+    senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
 
     setStatus('Connecting...');
     setIndicator('connecting');
     $indicator.classList.remove('hidden');
     $connectBtn.disabled = true;
-    startMqtt();
-  }
 
-  function onMessage(t, payload) {
-    if (t !== topic) return;
-    try {
-      const msg = JSON.parse(payload.toString());
-      if (msg._sender === clientId) return;
-      if (msg.data) {
-        window.app.applyRemoteState(msg.data);
+    // Subscribe via WebSocket — since=30m replays recent messages on connect
+    const wsUrl = NTFY_BASE.replace('https:', 'wss:').replace('http:', 'ws:')
+      + '/' + topic + '/ws?since=30m';
+
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      setStatus('Connected — syncing', 'connected');
+      setIndicator('connected');
+      showConnected();
+      // Publish current state so other peers get it
+      broadcast(window.app.getState());
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const ntfyMsg = JSON.parse(e.data);
+        if (ntfyMsg.event !== 'message') return;
+        const msg = JSON.parse(ntfyMsg.message);
+        if (msg._sender === senderId) return;
+        if (msg.data) {
+          window.app.applyRemoteState(msg.data);
+        }
+      } catch (err) {}
+    };
+
+    ws.onclose = () => {
+      if (topic) {
+        setStatus('Disconnected — reconnecting...', '');
+        setIndicator('connecting');
+        reconnectTimeout = setTimeout(() => startSync(hash), 3000);
       }
-    } catch (e) {}
+    };
+
+    ws.onerror = () => {
+      setStatus('Connection error', 'error');
+      setIndicator('error');
+    };
   }
 
   function broadcast(stateSnapshot) {
-    if (!client || !client.connected) return;
-    const msg = JSON.stringify({
-      _sender: clientId,
+    if (!topic) return;
+    const body = JSON.stringify({
+      _sender: senderId,
       data: stateSnapshot
     });
-    client.publish(topic, msg, { retain: true });
+    fetch(NTFY_BASE + '/' + topic, {
+      method: 'POST',
+      body: body
+    }).catch(() => {});
   }
 
   function disconnect() {
-    if (client) {
-      // Clear retained message
-      client.publish(topic, '', { retain: true });
-      client.end();
-      client = null;
-    }
+    cleanup();
     localStorage.removeItem(SYNC_KEY_STORAGE);
     topic = '';
     setStatus('Disconnected');
@@ -94,9 +118,17 @@
     $connectBtn.disabled = false;
   }
 
+  function cleanup() {
+    clearTimeout(reconnectTimeout);
+    if (ws) {
+      const old = ws;
+      ws = null;
+      old.onclose = null;
+      old.close();
+    }
+  }
+
   function showConnected() {
-    $indicator.classList.remove('hidden');
-    setIndicator('connected');
     $connectBtn.classList.add('hidden');
     $disconnectBtn.classList.remove('hidden');
     $connectBtn.disabled = false;
@@ -120,77 +152,9 @@
     return Math.abs(hash).toString(36);
   }
 
-  // Auto-connect on load using stored hash
+  // Auto-connect on load
   const savedHash = localStorage.getItem(SYNC_KEY_STORAGE);
   if (savedHash) {
-    topic = TOPIC_PREFIX + savedHash;
-    clientId = 'pomo-' + Math.random().toString(36).slice(2, 10);
-
-    setStatus('Connecting...');
-    setIndicator('connecting');
-    $indicator.classList.remove('hidden');
-    $connectBtn.disabled = true;
-    startMqtt();
-  }
-
-  function startMqtt() {
-    if (client) { try { client.end(true); } catch(e) {} client = null; }
-
-    const url = BROKERS[brokerIndex];
-    setStatus('Trying ' + new URL(url).hostname + '...', '');
-
-    client = mqtt.connect(url, {
-      clientId: clientId,
-      clean: true,
-      keepalive: 30,
-      connectTimeout: 5000,
-      reconnectPeriod: 0 // we handle reconnect manually for fallback
-    });
-
-    const timeout = setTimeout(() => {
-      // Broker didn't connect in time, try next
-      tryNextBroker();
-    }, 6000);
-
-    client.on('connect', () => {
-      clearTimeout(timeout);
-      const host = new URL(url).hostname;
-      setStatus('Connected via ' + host, 'connected');
-      showConnected();
-      client.subscribe(topic);
-      broadcast(window.app.getState());
-
-      // Now enable auto-reconnect to this working broker
-      client.options.reconnectPeriod = 3000;
-    });
-
-    client.on('message', onMessage);
-
-    client.on('error', () => {
-      clearTimeout(timeout);
-      tryNextBroker();
-    });
-
-    client.on('close', () => {
-      if (client && client.options.reconnectPeriod > 0) {
-        // Auto-reconnect is active, just update status
-        setStatus('Reconnecting...', '');
-        setIndicator('connecting');
-      }
-    });
-  }
-
-  function tryNextBroker() {
-    if (client) { try { client.end(true); } catch(e) {} client = null; }
-    brokerIndex++;
-    if (brokerIndex < BROKERS.length) {
-      startMqtt();
-    } else {
-      // All brokers failed, restart from first after delay
-      brokerIndex = 0;
-      setStatus('All brokers failed — retrying...', 'error');
-      setIndicator('error');
-      setTimeout(startMqtt, 5000);
-    }
+    startSync(savedHash);
   }
 })();
