@@ -54,10 +54,12 @@
 
   function tryAsHost(hostId) {
     cleanup();
+    console.log('[sync] tryAsHost', hostId);
 
     peer = new Peer(hostId, { debug: 0 });
 
-    peer.on('open', () => {
+    peer.on('open', id => {
+      console.log('[sync] host open, id=', id);
       isHost = true;
       setStatus('Connected as host. Waiting for peers...', 'connected');
       showConnected();
@@ -65,6 +67,7 @@
     });
 
     peer.on('error', err => {
+      console.log('[sync] host error', err.type, err.message);
       if (err.type === 'unavailable-id') {
         peer.destroy();
         tryAsClient(hostId);
@@ -75,32 +78,38 @@
     });
 
     peer.on('disconnected', () => {
+      console.log('[sync] host peer disconnected from signaling');
       if (secretKey) scheduleReconnect();
     });
   }
 
   function tryAsClient(hostId) {
     const clientId = hostId + '-' + Math.random().toString(36).slice(2, 8);
+    console.log('[sync] tryAsClient', clientId, '-> host', hostId);
     peer = new Peer(clientId, { debug: 0 });
 
-    peer.on('open', () => {
+    peer.on('open', id => {
+      console.log('[sync] client open, id=', id);
       isHost = false;
       setStatus('Connecting to host...', '');
       const conn = peer.connect(hostId, { reliable: true });
 
       conn.on('open', () => {
+        console.log('[sync] client data channel OPEN to host');
         setupConnection(conn);
         setStatus('Connected to host', 'connected');
         showConnected();
       });
 
       conn.on('error', err => {
+        console.log('[sync] client conn error', err);
         setStatus('Connection failed: ' + err.message, 'error');
         $connectBtn.disabled = false;
       });
     });
 
     peer.on('error', err => {
+      console.log('[sync] client peer error', err.type, err.message);
       if (err.type === 'peer-unavailable') {
         setStatus('Host left, becoming host...', '');
         peer.destroy();
@@ -112,6 +121,7 @@
     });
 
     peer.on('disconnected', () => {
+      console.log('[sync] client peer disconnected from signaling');
       if (secretKey) scheduleReconnect();
     });
 
@@ -119,7 +129,9 @@
   }
 
   function handleIncoming(conn) {
+    console.log('[sync] handleIncoming from', conn.peer, 'open=', conn.open);
     conn.on('open', () => {
+      console.log('[sync] incoming data channel OPEN from', conn.peer);
       setupConnection(conn);
       conn.send({ type: 'state', data: window.app.getState() });
     });
@@ -127,9 +139,11 @@
 
   function setupConnection(conn) {
     connections.push(conn);
+    console.log('[sync] setupConnection, peer=', conn.peer, 'open=', conn.open, 'total=', connections.length);
 
     conn.on('data', msg => {
       if (msg.type === 'state') {
+        console.log('[sync] received state', JSON.stringify(msg.data).slice(0, 120));
         window.app.applyRemoteState(msg.data);
         if (isHost) {
           connections.forEach(c => {
@@ -140,11 +154,13 @@
     });
 
     conn.on('close', () => {
+      console.log('[sync] conn closed', conn.peer);
       connections = connections.filter(c => c !== conn);
       updateConnectionStatus();
     });
 
-    conn.on('error', () => {
+    conn.on('error', err => {
+      console.log('[sync] conn error', conn.peer, err);
       connections = connections.filter(c => c !== conn);
       updateConnectionStatus();
     });
@@ -179,13 +195,14 @@
     clearTimeout(reconnectTimeout);
     reconnectTimeout = setTimeout(() => {
       if (!secretKey) return;
-      // If we still have active data connections, just try to reconnect
-      // the signaling server without tearing down working WebRTC channels
       const activeConns = connections.filter(c => c.open).length;
+      console.log('[sync] scheduleReconnect, activeConns=', activeConns);
       if (peer && activeConns > 0) {
+        console.log('[sync] reconnecting signaling only (data channels alive)');
         try { peer.reconnect(); } catch (e) {}
         return;
       }
+      console.log('[sync] full reconnect');
       setStatus('Reconnecting...');
       tryAsHost(PEER_PREFIX + hashKey(secretKey));
     }, 3000);
