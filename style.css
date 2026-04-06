@@ -94,8 +94,7 @@ header h1 {
 }
 
 .sync-indicator.hidden { display: none; }
-.sync-indicator.host { background: #2ecc71; }
-.sync-indicator.peer { background: #3498db; }
+.sync-indicator.connected { background: var(--break); }
 .sync-indicator.connecting { background: #f39c12; }
 .sync-indicator.error { background: var(--danger); }
 

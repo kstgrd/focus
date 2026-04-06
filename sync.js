@@ -1,14 +1,13 @@
-// --- P2P Sync via PeerJS ---
+// --- Sync via MQTT over WebSocket ---
 (function () {
-  const PEER_PREFIX = 'pomodorotimer-';
-  const SYNC_STORAGE_KEY = 'pomodoro-sync-key';
-  const SYNC_SERVER_KEY = 'pomodoro-sync-server';
+  const SYNC_KEY_STORAGE = 'pomodoro-sync-key';
+  const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
+  const TOPIC_PREFIX = 'pomodoro-timer/';
 
-  let peer = null;
-  let connections = [];
-  let isHost = false;
-  let secretKey = '';
-  let reconnectTimeout = null;
+  let client = null;
+  let topic = '';
+  let clientId = '';
+  let ignoreNext = false;
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -19,357 +18,115 @@
   const $closeBtn = document.getElementById('sync-close');
   const $status = document.getElementById('sync-status');
   const $indicator = document.getElementById('sync-indicator');
-  const $inputGroup = document.getElementById('sync-input-group');
-  const $syncServer = document.getElementById('sync-server');
-  const $desc = document.getElementById('sync-desc');
   const $backdrop = $modal.querySelector('.modal-backdrop');
 
-  // Load saved server
-  $syncServer.value = localStorage.getItem(SYNC_SERVER_KEY) || '';
-
   // Events
-  $syncBtn.addEventListener('click', openModal);
-  $closeBtn.addEventListener('click', closeModal);
-  $backdrop.addEventListener('click', closeModal);
+  $syncBtn.addEventListener('click', () => {
+    $modal.classList.remove('hidden');
+    if (!client) $syncKey.focus();
+  });
+  $closeBtn.addEventListener('click', () => $modal.classList.add('hidden'));
+  $backdrop.addEventListener('click', () => $modal.classList.add('hidden'));
   $connectBtn.addEventListener('click', connect);
   $disconnectBtn.addEventListener('click', disconnect);
   $syncKey.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 
-  // Listen for local state changes to broadcast
-  window.app.onStateChange(broadcastToAll);
+  // Listen for local state changes
+  window.app.onStateChange(broadcast);
 
-  function getPeerConfig() {
-    const server = $syncServer.value.trim();
-    if (server) {
-      // Self-hosted PeerJS server on LAN — no TURN/STUN needed
-      localStorage.setItem(SYNC_SERVER_KEY, server);
-      const [host, port] = server.split(':');
-      return {
-        debug: 0,
-        host: host,
-        port: parseInt(port, 10) || 9000,
-        path: '/',
-        secure: false
-      };
+  function connect() {
+    const key = $syncKey.value.trim();
+    if (!key) {
+      setStatus('Enter a secret key', 'error');
+      return;
     }
-    // Public PeerJS cloud with TURN fallback
-    localStorage.removeItem(SYNC_SERVER_KEY);
-    return {
-      debug: 0,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          {
-            urls: [
-              'turn:openrelay.metered.ca:80',
-              'turn:openrelay.metered.ca:443',
-              'turns:openrelay.metered.ca:443'
-            ],
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          }
-        ]
-      }
-    };
-  }
 
-  function openModal() {
-    $modal.classList.remove('hidden');
-    if (!secretKey) $syncKey.focus();
-  }
-
-  function closeModal() {
-    $modal.classList.add('hidden');
-  }
-
-  function connect(keyOrHash, isHash) {
-    let hash;
-    if (isHash) {
-      hash = keyOrHash;
-    } else {
-      const key = (keyOrHash && typeof keyOrHash === 'string') ? keyOrHash : $syncKey.value.trim();
-      if (!key) {
-        setStatus('Enter a secret key', 'error');
-        return;
-      }
-      hash = hashKey(key);
-    }
-    secretKey = hash;
-    localStorage.setItem(SYNC_STORAGE_KEY, hash);
-    const hostId = PEER_PREFIX + hash;
+    localStorage.setItem(SYNC_KEY_STORAGE, key);
+    topic = TOPIC_PREFIX + hashKey(key);
+    clientId = 'pomo-' + Math.random().toString(36).slice(2, 10);
 
     setStatus('Connecting...');
-    setIndicator('connecting');
     $connectBtn.disabled = true;
-    tryAsHost(hostId);
-  }
 
-  function tryAsHost(hostId) {
-    cleanup();
-    console.log('[sync] tryAsHost', hostId);
+    client = mqtt.connect(BROKER_URL, {
+      clientId: clientId,
+      clean: true,
+      keepalive: 30,
+      reconnectPeriod: 3000
+    });
 
-    peer = new Peer(hostId, getPeerConfig());
-
-    peer.on('open', id => {
-      console.log('[sync] host open, id=', id);
-      isHost = true;
-      setStatus('Connected as host. Waiting for peers...', 'connected');
-      setIndicator('host');
+    client.on('connect', () => {
+      setStatus('Connected — syncing', 'connected');
       showConnected();
-      peer.on('connection', handleIncoming);
+
+      // Subscribe to the shared topic
+      client.subscribe(topic);
+
+      // Publish current state as retained so new joiners get it
+      broadcast(window.app.getState());
     });
 
-    peer.on('error', err => {
-      console.log('[sync] host error', err.type, err.message);
-      if (err.type === 'unavailable-id') {
-        tryAsClient(hostId);
-      } else {
-        setStatus('Error: ' + err.message, 'error');
-        setIndicator('error');
-        $connectBtn.disabled = false;
-      }
-    });
+    client.on('message', (t, payload) => {
+      if (t !== topic) return;
+      if (ignoreNext) { ignoreNext = false; return; }
 
-    peer.on('disconnected', () => {
-      console.log('[sync] host peer disconnected from signaling');
-      if (!secretKey) return;
-      // Immediately try to restore signaling so incoming connections still work
-      if (peer && !peer.destroyed) {
-        console.log('[sync] host: attempting immediate signaling reconnect');
-        try { peer.reconnect(); } catch (e) { }
-      }
-      scheduleReconnect();
-    });
-  }
-
-  function tryAsClient(hostId) {
-    cleanup();
-    const clientId = hostId + '-' + Math.random().toString(36).slice(2, 8);
-    console.log('[sync] tryAsClient', clientId, '-> host', hostId);
-    peer = new Peer(clientId, getPeerConfig());
-
-    peer.on('open', id => {
-      console.log('[sync] client open, id=', id);
-      isHost = false;
-      setStatus('Connecting to host...', '');
-      const conn = peer.connect(hostId, { reliable: true });
-
-      conn.on('open', () => {
-        console.log('[sync] client data channel OPEN to host');
-        setupConnection(conn);
-        conn.send({ type: 'request-state' });
-        setStatus('Connected to host', 'connected');
-        setIndicator('peer');
-        showConnected();
-      });
-
-      conn.on('error', err => {
-        console.log('[sync] client conn error', err);
-        setStatus('Connection failed: ' + err.message, 'error');
-        setIndicator('error');
-        $connectBtn.disabled = false;
-      });
-    });
-
-    peer.on('error', err => {
-      console.log('[sync] client peer error', err.type, err.message);
-      if (err.type === 'peer-unavailable') {
-        setStatus('Host left, becoming host...', '');
-        tryAsHost(PEER_PREFIX + secretKey);
-      } else {
-        setStatus('Error: ' + err.message, 'error');
-        setIndicator('error');
-        $connectBtn.disabled = false;
-      }
-    });
-
-    peer.on('disconnected', () => {
-      console.log('[sync] client peer disconnected from signaling');
-      if (!secretKey) return;
-      // Immediately try to restore signaling so ICE negotiation can continue
-      if (peer && !peer.destroyed) {
-        console.log('[sync] client: attempting immediate signaling reconnect');
-        try { peer.reconnect(); } catch (e) { }
-      }
-      scheduleReconnect();
-    });
-
-    peer.on('connection', handleIncoming);
-  }
-
-  function handleIncoming(conn) {
-    console.log('[sync] handleIncoming from', conn.peer, 'open=', conn.open);
-
-    // ICE diagnostics: monitor why connection might fail
-    const iceCheck = setInterval(() => {
-      const pc = conn.peerConnection;
-      if (!pc) return;
-      clearInterval(iceCheck);
-      console.log('[sync] ICE initial:', pc.iceConnectionState, 'gathering:', pc.iceGatheringState);
-      pc.addEventListener('iceconnectionstatechange', () => {
-        console.log('[sync] ICE:', pc.iceConnectionState);
-      });
-      pc.addEventListener('icecandidate', e => {
-        if (e.candidate) {
-          console.log('[sync] ICE candidate:', e.candidate.type, e.candidate.protocol, e.candidate.address);
-        } else {
-          console.log('[sync] ICE gathering complete');
+      try {
+        const msg = JSON.parse(payload.toString());
+        // Ignore our own messages
+        if (msg._sender === clientId) return;
+        if (msg.data) {
+          window.app.applyRemoteState(msg.data);
         }
-      });
-    }, 50);
-
-    conn.on('open', () => {
-      clearInterval(iceCheck);
-      console.log('[sync] incoming data channel OPEN from', conn.peer);
-      setupConnection(conn);
-      conn.send({ type: 'full-sync', data: window.app.getState() });
+      } catch (e) {}
     });
 
-    conn.on('error', err => {
-      clearInterval(iceCheck);
-      console.log('[sync] incoming conn error:', err);
+    client.on('error', err => {
+      setStatus('Error: ' + err.message, 'error');
+      setIndicator('error');
+    });
+
+    client.on('reconnect', () => {
+      setStatus('Reconnecting...', '');
+      setIndicator('connecting');
+    });
+
+    client.on('offline', () => {
+      setStatus('Offline', 'error');
+      setIndicator('error');
     });
   }
 
-  function setupConnection(conn) {
-    connections.push(conn);
-    console.log('[sync] setupConnection, peer=', conn.peer, 'open=', conn.open, 'total=', connections.length);
-
-    // Monitor ICE state to detect dead connections (e.g. host page refresh)
-    const pc = conn.peerConnection;
-    if (pc) {
-      pc.oniceconnectionstatechange = () => {
-        const s = pc.iceConnectionState;
-        console.log('[sync] ICE state:', s, conn.peer);
-        if (s === 'disconnected' || s === 'failed' || s === 'closed') {
-          removeConnection(conn);
-        }
-      };
-    }
-
-    conn.on('data', msg => {
-      if (msg.type === 'full-sync') {
-        console.log('[sync] received full-sync', JSON.stringify(msg.data).slice(0, 120));
-        window.app.forceApplyRemoteState(msg.data);
-      } else if (msg.type === 'request-state' && isHost) {
-        console.log('[sync] peer requested state, sending full-sync');
-        conn.send({ type: 'full-sync', data: window.app.getState() });
-      } else if (msg.type === 'state') {
-        console.log('[sync] received state', JSON.stringify(msg.data).slice(0, 120));
-        window.app.applyRemoteState(msg.data);
-        if (isHost) {
-          connections.forEach(c => {
-            if (c !== conn && c.open) c.send(msg);
-          });
-        }
-      }
+  function broadcast(stateSnapshot) {
+    if (!client || !client.connected) return;
+    const msg = JSON.stringify({
+      _sender: clientId,
+      data: stateSnapshot
     });
-
-    conn.on('close', () => {
-      console.log('[sync] conn closed', conn.peer);
-      removeConnection(conn);
-    });
-
-    conn.on('error', err => {
-      console.log('[sync] conn error', conn.peer, err);
-      removeConnection(conn);
-    });
-
-    updateConnectionStatus();
-  }
-
-  function removeConnection(conn) {
-    const had = connections.length;
-    connections = connections.filter(c => c !== conn);
-    if (connections.length === had) return; // already removed
-    try { conn.close(); } catch (e) { }
-    updateConnectionStatus();
-    handleConnectionLost();
-  }
-
-  function broadcastToAll(stateSnapshot) {
-    const msg = { type: 'state', data: stateSnapshot };
-    connections.forEach(c => { if (c.open) c.send(msg); });
+    client.publish(topic, msg, { retain: true });
   }
 
   function disconnect() {
-    secretKey = '';
-    localStorage.removeItem(SYNC_STORAGE_KEY);
-    cleanup();
+    if (client) {
+      // Clear retained message
+      client.publish(topic, '', { retain: true });
+      client.end();
+      client = null;
+    }
+    localStorage.removeItem(SYNC_KEY_STORAGE);
+    topic = '';
     setStatus('Disconnected');
-    setIndicator(null);
-    // Restore input UI
-    $inputGroup.classList.remove('hidden');
-    $desc.classList.remove('hidden');
-    $syncKey.value = '';
+    $indicator.classList.add('hidden');
     $connectBtn.classList.remove('hidden');
     $disconnectBtn.classList.add('hidden');
     $connectBtn.disabled = false;
   }
 
-  function cleanup() {
-    clearTimeout(reconnectTimeout);
-    connections.forEach(c => { try { c.close(); } catch (e) { } });
-    connections = [];
-    if (peer) { try { peer.destroy(); } catch (e) { } peer = null; }
-    isHost = false;
-  }
-
-  function handleConnectionLost() {
-    if (isHost || connections.length > 0 || !secretKey) return;
-    console.log('[sync] lost all connections, reconnecting in 2s...');
-    setStatus('Host disconnected. Reconnecting...', '');
-    setIndicator('connecting');
-    clearTimeout(reconnectTimeout);
-    reconnectTimeout = setTimeout(() => {
-      if (!secretKey) return;
-      console.log('[sync] reconnecting after host loss');
-      tryAsHost(PEER_PREFIX + secretKey);
-    }, 2000);
-  }
-
-  function scheduleReconnect() {
-    clearTimeout(reconnectTimeout);
-    // Give enough time for the immediate reconnect + ICE negotiation to work
-    reconnectTimeout = setTimeout(() => {
-      if (!secretKey) return;
-      // If signaling reconnected successfully, nothing to do
-      if (peer && peer.open) {
-        console.log('[sync] scheduleReconnect: signaling already restored, no action');
-        return;
-      }
-      const activeConns = connections.filter(c => c.open).length;
-      if (activeConns > 0) {
-        console.log('[sync] scheduleReconnect: data channels alive, skipping teardown');
-        return;
-      }
-      console.log('[sync] scheduleReconnect: full reconnect (signaling + data both down)');
-      setStatus('Reconnecting...');
-      setIndicator('connecting');
-      tryAsHost(PEER_PREFIX + secretKey);
-    }, 8000);
-  }
-
   function showConnected() {
-    // Hide input, show only disconnect
-    $inputGroup.classList.add('hidden');
-    $desc.classList.add('hidden');
+    $indicator.classList.remove('hidden');
+    setIndicator('connected');
     $connectBtn.classList.add('hidden');
     $disconnectBtn.classList.remove('hidden');
     $connectBtn.disabled = false;
-  }
-
-  function updateConnectionStatus() {
-    const active = connections.filter(c => c.open).length;
-    if (peer && peer.open) {
-      if (isHost) {
-        setStatus(`Host \u2014 ${active} peer${active !== 1 ? 's' : ''} connected`, 'connected');
-        setIndicator('host');
-      } else {
-        setStatus(active > 0 ? 'Connected to host' : 'Connecting...', active > 0 ? 'connected' : '');
-        setIndicator(active > 0 ? 'peer' : 'connecting');
-      }
-    }
   }
 
   function setStatus(text, cls) {
@@ -377,8 +134,9 @@
     $status.className = 'sync-status' + (cls ? ' ' + cls : '');
   }
 
-  function setIndicator(type) {
-    $indicator.className = 'sync-indicator' + (type ? ' ' + type : ' hidden');
+  function setIndicator(state) {
+    $indicator.classList.remove('hidden', 'host', 'peer', 'connecting', 'error');
+    if (state) $indicator.classList.add(state);
   }
 
   function hashKey(key) {
@@ -389,10 +147,10 @@
     return Math.abs(hash).toString(36);
   }
 
-  // Auto-connect on load if a hash was previously stored
-  const savedHash = localStorage.getItem(SYNC_STORAGE_KEY);
-  if (savedHash) {
-    console.log('[sync] auto-connecting with stored hash');
-    connect(savedHash, true);
+  // Auto-connect on load
+  const savedKey = localStorage.getItem(SYNC_KEY_STORAGE);
+  if (savedKey) {
+    $syncKey.value = savedKey;
+    connect();
   }
 })();

@@ -137,10 +137,9 @@
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <h2>P2P Sync</h2>
-      <p class="modal-desc" id="sync-desc">Connect devices using a shared secret key. For LAN sync, run <code>npx peerjs --port 9000</code> and enter the server address below.</p>
+      <p class="modal-desc" id="sync-desc">Connect devices using a shared secret key. State syncs over WebSocket — works across any network.</p>
       <div class="input-group" id="sync-input-group">
         <input type="text" id="sync-key" placeholder="Enter secret key..." autocomplete="off" spellcheck="false">
-        <input type="text" id="sync-server" placeholder="PeerJS server (e.g. 192.168.1.5:9000)" autocomplete="off" spellcheck="false">
       </div>
       <div id="sync-status" class="sync-status"></div>
       <div class="modal-actions">
@@ -151,7 +150,7 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://unpkg.com/mqtt@5.10.4/dist/mqtt.min.js"></script>
   <script src="app.js"></script>
   <script src="sync.js"></script>
 </body>
