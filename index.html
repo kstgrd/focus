@@ -137,15 +137,15 @@
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <h2>P2P Sync</h2>
-      <p class="modal-desc">Connect devices on your local network using a shared secret key. Uses WebRTC peer-to-peer — no server stores your data.</p>
-      <div class="input-group">
+      <p class="modal-desc" id="sync-desc">Connect devices on your local network using a shared secret key. Uses WebRTC peer-to-peer — no server stores your data.</p>
+      <div class="input-group" id="sync-input-group">
         <input type="text" id="sync-key" placeholder="Enter secret key..." autocomplete="off" spellcheck="false">
       </div>
       <div id="sync-status" class="sync-status"></div>
       <div class="modal-actions">
         <button id="sync-connect" class="btn btn-primary">Connect</button>
         <button id="sync-disconnect" class="btn btn-danger hidden">Disconnect</button>
-        <button id="sync-close" class="btn btn-ghost">Cancel</button>
+        <button id="sync-close" class="btn btn-ghost">Close</button>
       </div>
     </div>
   </div>

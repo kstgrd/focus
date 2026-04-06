@@ -17,6 +17,8 @@
   const $closeBtn = document.getElementById('sync-close');
   const $status = document.getElementById('sync-status');
   const $indicator = document.getElementById('sync-indicator');
+  const $inputGroup = document.getElementById('sync-input-group');
+  const $desc = document.getElementById('sync-desc');
   const $backdrop = $modal.querySelector('.modal-backdrop');
 
   // Events
@@ -31,26 +33,29 @@
   window.app.onStateChange(broadcastToAll);
 
   function openModal() {
-    // Pre-fill with stored key if available
-    const stored = localStorage.getItem(SYNC_STORAGE_KEY);
-    if (stored && !$syncKey.value) $syncKey.value = stored;
     $modal.classList.remove('hidden');
-    $syncKey.focus();
+    if (!secretKey) $syncKey.focus();
   }
 
   function closeModal() {
     $modal.classList.add('hidden');
   }
 
-  function connect(key) {
-    if (!key) key = $syncKey.value.trim();
-    if (!key) {
-      setStatus('Enter a secret key', 'error');
-      return;
+  function connect(keyOrHash, isHash) {
+    let hash;
+    if (isHash) {
+      hash = keyOrHash;
+    } else {
+      const key = (keyOrHash && typeof keyOrHash === 'string') ? keyOrHash : $syncKey.value.trim();
+      if (!key) {
+        setStatus('Enter a secret key', 'error');
+        return;
+      }
+      hash = hashKey(key);
     }
-    secretKey = key;
-    localStorage.setItem(SYNC_STORAGE_KEY, key);
-    const hostId = PEER_PREFIX + hashKey(key);
+    secretKey = hash;
+    localStorage.setItem(SYNC_STORAGE_KEY, hash);
+    const hostId = PEER_PREFIX + hash;
 
     setStatus('Connecting...');
     $connectBtn.disabled = true;
@@ -124,7 +129,7 @@
       if (err.type === 'peer-unavailable') {
         setStatus('Host left, becoming host...', '');
         peer.destroy();
-        tryAsHost(PEER_PREFIX + hashKey(secretKey));
+        tryAsHost(PEER_PREFIX + secretKey);
       } else {
         setStatus('Error: ' + err.message, 'error');
         $connectBtn.disabled = false;
@@ -196,6 +201,10 @@
     cleanup();
     setStatus('Disconnected');
     $indicator.classList.add('hidden');
+    // Restore input UI
+    $inputGroup.classList.remove('hidden');
+    $desc.classList.remove('hidden');
+    $syncKey.value = '';
     $connectBtn.classList.remove('hidden');
     $disconnectBtn.classList.add('hidden');
     $connectBtn.disabled = false;
@@ -226,12 +235,15 @@
       }
       console.log('[sync] scheduleReconnect: full reconnect (signaling + data both down)');
       setStatus('Reconnecting...');
-      tryAsHost(PEER_PREFIX + hashKey(secretKey));
+      tryAsHost(PEER_PREFIX + secretKey);
     }, 8000);
   }
 
   function showConnected() {
     $indicator.classList.remove('hidden');
+    // Hide input, show only disconnect
+    $inputGroup.classList.add('hidden');
+    $desc.classList.add('hidden');
     $connectBtn.classList.add('hidden');
     $disconnectBtn.classList.remove('hidden');
     $connectBtn.disabled = false;
@@ -264,10 +276,10 @@
     return Math.abs(hash).toString(36);
   }
 
-  // Auto-connect on load if a key was previously stored
-  const savedKey = localStorage.getItem(SYNC_STORAGE_KEY);
-  if (savedKey) {
-    console.log('[sync] auto-connecting with stored key');
-    connect(savedKey);
+  // Auto-connect on load if a hash was previously stored
+  const savedHash = localStorage.getItem(SYNC_STORAGE_KEY);
+  if (savedHash) {
+    console.log('[sync] auto-connecting with stored hash');
+    connect(savedHash, true);
   }
 })();
