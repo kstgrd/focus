@@ -1,6 +1,7 @@
 // --- P2P Sync via PeerJS ---
 (function () {
   const PEER_PREFIX = 'pomodorotimer-';
+  const SYNC_STORAGE_KEY = 'pomodoro-sync-key';
   let peer = null;
   let connections = [];
   let isHost = false;
@@ -30,6 +31,9 @@
   window.app.onStateChange(broadcastToAll);
 
   function openModal() {
+    // Pre-fill with stored key if available
+    const stored = localStorage.getItem(SYNC_STORAGE_KEY);
+    if (stored && !$syncKey.value) $syncKey.value = stored;
     $modal.classList.remove('hidden');
     $syncKey.focus();
   }
@@ -38,13 +42,14 @@
     $modal.classList.add('hidden');
   }
 
-  function connect() {
-    const key = $syncKey.value.trim();
+  function connect(key) {
+    if (!key) key = $syncKey.value.trim();
     if (!key) {
       setStatus('Enter a secret key', 'error');
       return;
     }
     secretKey = key;
+    localStorage.setItem(SYNC_STORAGE_KEY, key);
     const hostId = PEER_PREFIX + hashKey(key);
 
     setStatus('Connecting...');
@@ -187,6 +192,7 @@
 
   function disconnect() {
     secretKey = '';
+    localStorage.removeItem(SYNC_STORAGE_KEY);
     cleanup();
     setStatus('Disconnected');
     $indicator.classList.add('hidden');
@@ -256,5 +262,12 @@
       hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
     }
     return Math.abs(hash).toString(36);
+  }
+
+  // Auto-connect on load if a key was previously stored
+  const savedKey = localStorage.getItem(SYNC_STORAGE_KEY);
+  if (savedKey) {
+    console.log('[sync] auto-connecting with stored key');
+    connect(savedKey);
   }
 })();
