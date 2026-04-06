@@ -190,12 +190,14 @@
       console.log('[sync] conn closed', conn.peer);
       connections = connections.filter(c => c !== conn);
       updateConnectionStatus();
+      handleConnectionLost();
     });
 
     conn.on('error', err => {
       console.log('[sync] conn error', conn.peer, err);
       connections = connections.filter(c => c !== conn);
       updateConnectionStatus();
+      handleConnectionLost();
     });
 
     updateConnectionStatus();
@@ -227,6 +229,18 @@
     connections = [];
     if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
     isHost = false;
+  }
+
+  function handleConnectionLost() {
+    if (isHost || connections.length > 0 || !secretKey) return;
+    console.log('[sync] lost all connections, reconnecting in 2s...');
+    setStatus('Host disconnected. Reconnecting...', '');
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = setTimeout(() => {
+      if (!secretKey) return;
+      console.log('[sync] reconnecting after host loss');
+      tryAsHost(PEER_PREFIX + secretKey);
+    }, 2000);
   }
 
   function scheduleReconnect() {
