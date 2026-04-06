@@ -179,9 +179,9 @@ $settingsSave.addEventListener('click', () => {
   settings.lastUpdate = Date.now();
 
   saveSettings();
+  state.lastUpdate = Date.now();
   if (!state.isRunning) {
     state.remainingAtStart = getTotalTime();
-    state.lastUpdate = Date.now();
   }
   buildSegments();
   broadcastState();
