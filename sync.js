@@ -166,13 +166,35 @@
     connections.push(conn);
     console.log('[sync] setupConnection, peer=', conn.peer, 'open=', conn.open, 'total=', connections.length);
 
+    // Heartbeat: detect dead connections fast (e.g. host page refresh)
+    let lastPong = Date.now();
+    const heartbeat = setInterval(() => {
+      if (!conn.open) { clearInterval(heartbeat); return; }
+      try { conn.send({ type: 'ping' }); } catch (e) {}
+      // If no pong received in 10s, connection is dead
+      if (Date.now() - lastPong > 10000) {
+        console.log('[sync] heartbeat timeout, closing', conn.peer);
+        clearInterval(heartbeat);
+        try { conn.close(); } catch (e) {}
+        connections = connections.filter(c => c !== conn);
+        updateConnectionStatus();
+        handleConnectionLost();
+      }
+    }, 5000);
+
     conn.on('data', msg => {
+      if (msg.type === 'ping') {
+        try { conn.send({ type: 'pong' }); } catch (e) {}
+        return;
+      }
+      if (msg.type === 'pong') {
+        lastPong = Date.now();
+        return;
+      }
       if (msg.type === 'full-sync') {
-        // Initial sync from host — force apply regardless of timestamps
         console.log('[sync] received full-sync', JSON.stringify(msg.data).slice(0, 120));
         window.app.forceApplyRemoteState(msg.data);
       } else if (msg.type === 'request-state' && isHost) {
-        // Peer is asking for current state
         console.log('[sync] peer requested state, sending full-sync');
         conn.send({ type: 'full-sync', data: window.app.getState() });
       } else if (msg.type === 'state') {
@@ -188,6 +210,7 @@
 
     conn.on('close', () => {
       console.log('[sync] conn closed', conn.peer);
+      clearInterval(heartbeat);
       connections = connections.filter(c => c !== conn);
       updateConnectionStatus();
       handleConnectionLost();
@@ -195,6 +218,7 @@
 
     conn.on('error', err => {
       console.log('[sync] conn error', conn.peer, err);
+      clearInterval(heartbeat);
       connections = connections.filter(c => c !== conn);
       updateConnectionStatus();
       handleConnectionLost();
