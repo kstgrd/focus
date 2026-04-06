@@ -99,7 +99,6 @@
     peer.on('error', err => {
       console.log('[sync] host error', err.type, err.message);
       if (err.type === 'unavailable-id') {
-        peer.destroy();
         tryAsClient(hostId);
       } else {
         setStatus('Error: ' + err.message, 'error');
@@ -121,6 +120,7 @@
   }
 
   function tryAsClient(hostId) {
+    cleanup();
     const clientId = hostId + '-' + Math.random().toString(36).slice(2, 8);
     console.log('[sync] tryAsClient', clientId, '-> host', hostId);
     peer = new Peer(clientId, PEER_CONFIG);
@@ -152,7 +152,6 @@
       console.log('[sync] client peer error', err.type, err.message);
       if (err.type === 'peer-unavailable') {
         setStatus('Host left, becoming host...', '');
-        peer.destroy();
         tryAsHost(PEER_PREFIX + secretKey);
       } else {
         setStatus('Error: ' + err.message, 'error');
