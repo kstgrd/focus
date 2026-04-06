@@ -113,6 +113,8 @@
       conn.on('open', () => {
         console.log('[sync] client data channel OPEN to host');
         setupConnection(conn);
+        // Ask host for current state
+        conn.send({ type: 'request-state' });
         setStatus('Connected to host', 'connected');
         showConnected();
       });
@@ -155,7 +157,8 @@
     conn.on('open', () => {
       console.log('[sync] incoming data channel OPEN from', conn.peer);
       setupConnection(conn);
-      conn.send({ type: 'state', data: window.app.getState() });
+      // Send full sync to new peer immediately
+      conn.send({ type: 'full-sync', data: window.app.getState() });
     });
   }
 
@@ -164,7 +167,15 @@
     console.log('[sync] setupConnection, peer=', conn.peer, 'open=', conn.open, 'total=', connections.length);
 
     conn.on('data', msg => {
-      if (msg.type === 'state') {
+      if (msg.type === 'full-sync') {
+        // Initial sync from host — force apply regardless of timestamps
+        console.log('[sync] received full-sync', JSON.stringify(msg.data).slice(0, 120));
+        window.app.forceApplyRemoteState(msg.data);
+      } else if (msg.type === 'request-state' && isHost) {
+        // Peer is asking for current state
+        console.log('[sync] peer requested state, sending full-sync');
+        conn.send({ type: 'full-sync', data: window.app.getState() });
+      } else if (msg.type === 'state') {
         console.log('[sync] received state', JSON.stringify(msg.data).slice(0, 120));
         window.app.applyRemoteState(msg.data);
         if (isHost) {

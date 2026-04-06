@@ -66,6 +66,7 @@ const $settingsBackdrop = $settingsModal.querySelector('.modal-backdrop');
 window.app = {
   onStateChange: function(cb) { stateChangeCallbacks.push(cb); },
   applyRemoteState: applyRemoteState,
+  forceApplyRemoteState: forceApplyRemoteState,
   getState: function() { return { ...state, settings: { ...settings } }; }
 };
 
@@ -738,7 +739,15 @@ function registerSW() {
 // --- Sync ---
 function applyRemoteState(remote) {
   if (remote.lastUpdate <= state.lastUpdate) return;
+  doApplyRemoteState(remote);
+}
 
+function forceApplyRemoteState(remote) {
+  console.log('[app] forceApplyRemoteState from host');
+  doApplyRemoteState(remote);
+}
+
+function doApplyRemoteState(remote) {
   const wasRunning = state.isRunning;
 
   state.isFocus = remote.isFocus;
@@ -750,15 +759,15 @@ function applyRemoteState(remote) {
   state.date = remote.date;
   state.lastUpdate = remote.lastUpdate;
 
-  // Apply settings if included and newer
-  if (remote.settings && remote.settings.lastUpdate > (settings.lastUpdate || 0)) {
+  // Apply settings if included
+  if (remote.settings) {
     const s = remote.settings;
     if (s.goal >= 1 && s.goal <= 20) settings.goal = s.goal;
     if (s.focusMin >= 1 && s.focusMin <= 120) settings.focusMin = s.focusMin;
     if (s.breakMin >= 1 && s.breakMin <= 30) settings.breakMin = s.breakMin;
     if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
     if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
-    settings.lastUpdate = s.lastUpdate;
+    if (typeof s.lastUpdate === 'number') settings.lastUpdate = s.lastUpdate;
     saveSettings();
     buildSegments();
   }
