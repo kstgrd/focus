@@ -5,7 +5,7 @@ const STORAGE_KEY = 'pomodoro-state';
 const SETTINGS_KEY = 'pomodoro-settings';
 
 // --- Settings ---
-let settings = { goal: 8, focusMin: DEFAULT_FOCUS, breakMin: DEFAULT_BREAK, autoFocus: false, autoBreak: false };
+let settings = { goal: 8, focusMin: DEFAULT_FOCUS, breakMin: DEFAULT_BREAK, autoFocus: false, autoBreak: false, lastUpdate: 0 };
 const ROW_SIZE = 24;
 let builtFocusSlots = 0;
 
@@ -176,15 +176,15 @@ $settingsSave.addEventListener('click', () => {
   settings.goal = Math.min(Math.max(1, goal), max);
   settings.autoFocus = $autoFocusInput.checked;
   settings.autoBreak = $autoBreakInput.checked;
+  settings.lastUpdate = Date.now();
 
   saveSettings();
   if (!state.isRunning) {
     state.remainingAtStart = getTotalTime();
     state.lastUpdate = Date.now();
-    saveState();
   }
   buildSegments();
-  updateUI();
+  broadcastState();
   $settingsModal.classList.add('hidden');
 });
 
@@ -608,6 +608,7 @@ function loadSettings() {
     if (d.breakMin >= 1 && d.breakMin <= 30) settings.breakMin = d.breakMin;
     if (typeof d.autoFocus === 'boolean') settings.autoFocus = d.autoFocus;
     if (typeof d.autoBreak === 'boolean') settings.autoBreak = d.autoBreak;
+    if (typeof d.lastUpdate === 'number') settings.lastUpdate = d.lastUpdate;
   } catch (e) {}
 }
 
@@ -749,14 +750,15 @@ function applyRemoteState(remote) {
   state.date = remote.date;
   state.lastUpdate = remote.lastUpdate;
 
-  // Apply settings if included
-  if (remote.settings) {
+  // Apply settings if included and newer
+  if (remote.settings && remote.settings.lastUpdate > (settings.lastUpdate || 0)) {
     const s = remote.settings;
     if (s.goal >= 1 && s.goal <= 20) settings.goal = s.goal;
     if (s.focusMin >= 1 && s.focusMin <= 120) settings.focusMin = s.focusMin;
     if (s.breakMin >= 1 && s.breakMin <= 30) settings.breakMin = s.breakMin;
     if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
     if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
+    settings.lastUpdate = s.lastUpdate;
     saveSettings();
     buildSegments();
   }
