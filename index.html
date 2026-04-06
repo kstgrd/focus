@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Pomodoro Timer</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#0f0e17">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Apply saved state before first paint to prevent color flash
+    document.documentElement.style.visibility = 'hidden';
+    try {
+      var _s = JSON.parse(localStorage.getItem('pomodoro-state'));
+      if (_s && !_s.isFocus)
+        document.documentElement.style.setProperty('--phase-color', '#00897b');
+    } catch(e) {}
+  </script>
+</head>
+<body>
+  <div class="app" id="app">
+    <header>
+      <h1>Pomodoro</h1>
+      <div class="header-actions">
+        <span id="sync-indicator" class="sync-indicator hidden"></span>
+        <button id="settings-btn" class="icon-btn" title="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <button id="sync-btn" class="icon-btn" title="P2P Sync">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 1l4 4-4 4"/><path d="M22 5H2"/>
+            <path d="M6 23l-4-4 4-4"/><path d="M2 19h20"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <div class="timer-info">
+        <span id="time" class="time-display">25:00</span>
+        <span id="phase" class="phase-label focus">FOCUS</span>
+      </div>
+
+      <div class="progress-container">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+
+      <div class="progress-footer">
+        <span id="progress-label">0 / 8 pomodoros</span>
+        <span id="progress-time">0h 0m focused</span>
+      </div>
+
+      <div class="controls" id="controls">
+        <div class="controls-default" id="controls-default">
+          <button id="start-btn" class="btn btn-primary">
+            <svg class="play-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+            <svg class="pause-icon hidden" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+            <span id="start-label">Start</span>
+          </button>
+          <button id="restart-btn" class="btn btn-secondary" title="Restart current timer">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+          </button>
+          <button id="skip-btn" class="btn btn-secondary" title="Skip to next phase">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5,4 15,12 5,20" fill="currentColor" stroke="none"/><line x1="19" y1="5" x2="19" y2="19"/>
+            </svg>
+          </button>
+        </div>
+        <div class="controls-confirm hidden" id="controls-confirm">
+          <span class="confirm-question" id="confirm-question"></span>
+          <div class="confirm-buttons">
+            <button id="confirm-yes" class="btn btn-confirm">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button id="confirm-no" class="btn btn-cancel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <div id="toast" class="toast hidden">Goal achieved!</div>
+    <canvas id="confetti-canvas"></canvas>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <h2>Settings</h2>
+      <div class="setting-row">
+        <span>Focus duration</span>
+        <div class="slider-group">
+          <input type="range" id="focus-input" min="1" max="120" value="25">
+          <input type="number" class="slider-num" id="focus-num" min="1" max="120" value="25"> <span class="slider-unit">min</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>Break duration</span>
+        <div class="slider-group">
+          <input type="range" id="break-input" min="1" max="30" value="5">
+          <input type="number" class="slider-num" id="break-num" min="1" max="30" value="5"> <span class="slider-unit">min</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>Daily goal</span>
+        <div class="slider-group">
+          <input type="range" id="goal-input" min="1" max="20" value="8">
+          <input type="number" class="slider-num" id="goal-num" min="1" max="20" value="8"> <span class="slider-unit">cnt</span>
+        </div>
+      </div>
+      <label class="setting-check">
+        <input type="checkbox" id="auto-focus-input">
+        <span>Auto start focus</span>
+      </label>
+      <label class="setting-check">
+        <input type="checkbox" id="auto-break-input">
+        <span>Auto start break</span>
+      </label>
+      <div class="modal-actions">
+        <button id="settings-save" class="btn btn-primary">Save</button>
+        <button id="settings-close" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sync Modal -->
+  <div id="sync-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <h2>P2P Sync</h2>
+      <p class="modal-desc">Connect devices on your local network using a shared secret key. Uses WebRTC peer-to-peer — no server stores your data.</p>
+      <div class="input-group">
+        <input type="text" id="sync-key" placeholder="Enter secret key..." autocomplete="off" spellcheck="false">
+      </div>
+      <div id="sync-status" class="sync-status"></div>
+      <div class="modal-actions">
+        <button id="sync-connect" class="btn btn-primary">Connect</button>
+        <button id="sync-disconnect" class="btn btn-danger hidden">Disconnect</button>
+        <button id="sync-close" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="app.js"></script>
+  <script src="sync.js"></script>
+</body>
+</html>
