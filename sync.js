@@ -2,6 +2,24 @@
 (function () {
   const PEER_PREFIX = 'pomodorotimer-';
   const SYNC_STORAGE_KEY = 'pomodoro-sync-key';
+
+  // ICE servers for cross-OS desktop WebRTC (mDNS fails between Windows/macOS)
+  const PEER_CONFIG = {
+    debug: 0,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        {
+          urls: 'turn:0.peerjs.com:3478',
+          username: 'peerjs',
+          credential: 'peerjsp'
+        }
+      ]
+    }
+  };
+
   let peer = null;
   let connections = [];
   let isHost = false;
@@ -67,7 +85,7 @@
     cleanup();
     console.log('[sync] tryAsHost', hostId);
 
-    peer = new Peer(hostId, { debug: 0 });
+    peer = new Peer(hostId, PEER_CONFIG);
 
     peer.on('open', id => {
       console.log('[sync] host open, id=', id);
@@ -105,7 +123,7 @@
   function tryAsClient(hostId) {
     const clientId = hostId + '-' + Math.random().toString(36).slice(2, 8);
     console.log('[sync] tryAsClient', clientId, '-> host', hostId);
-    peer = new Peer(clientId, { debug: 0 });
+    peer = new Peer(clientId, PEER_CONFIG);
 
     peer.on('open', id => {
       console.log('[sync] client open, id=', id);
