@@ -1,7 +1,8 @@
 // --- Sync via Firebase ---
-// - Google sign-in for auth
-// - Firestore doc keyed by user email for real-time state sync
-// - IndexedDB offline persistence via Firestore
+// Rules:
+// 1. Firebase is the source of truth — always
+// 2. If Firebase has no data (first-ever sync) — upload local state, then Firebase is source of truth
+// 3. On connect: overwrite local state with Firebase data
 (function () {
   const firebaseConfig = {
     apiKey: "AIzaSyB_IwLOF83V4KAwbZCobLNuL9vLfWmh88c",
@@ -12,7 +13,6 @@
     appId: "1:7929797079:web:0d37d445d4214648e25392"
   };
 
-  // Init Firebase
   firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth();
   const db = firebase.firestore();
@@ -22,6 +22,7 @@
   let docPath = '';
   let senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
   let applying = false;
+  let ready = false; // true only after we've confirmed Firebase state
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -44,10 +45,10 @@
   $signInBtn.addEventListener('click', signIn);
   $signOutBtn.addEventListener('click', signOut);
 
-  // On every LOCAL state change -> debounced push
+  // On every LOCAL state change -> debounced push (only after initial sync done)
   let pushTimeout = null;
   window.app.onStateChange(() => {
-    if (applying) return;
+    if (applying || !ready) return;
     clearTimeout(pushTimeout);
     pushTimeout = setTimeout(() => push(window.app.getState()), 2000);
   });
@@ -69,6 +70,7 @@
   async function signOut() {
     cleanup();
     docPath = '';
+    ready = false;
     await auth.signOut();
     setIndicator('');
     $indicator.classList.add('hidden');
@@ -91,43 +93,68 @@
 
   function startSync(user) {
     cleanup();
+    ready = false;
     docPath = 'sync/' + user.uid;
     setStatus('Connecting...', '');
     setIndicator('connecting');
     $indicator.classList.remove('hidden');
 
-    // Subscribe to Firestore document
+    // Step 1: Fetch server state (bypasses cache)
     const docRef = db.doc(docPath);
-    let initialLoad = true;
-    unsubscribe = docRef.onSnapshot(snapshot => {
+    docRef.get({ source: 'server' }).then(snapshot => {
+      if (snapshot.exists && snapshot.data().state) {
+        // Firebase has data — overwrite local state
+        applying = true;
+        window.app.applyRemoteState(snapshot.data().state);
+        applying = false;
+      } else {
+        // No data in Firebase — seed with local state
+        push(window.app.getState());
+      }
+
+      // Step 2: Now ready — allow local pushes and listen for live updates
+      ready = true;
       setStatus('Connected — syncing', 'connected');
       setIndicator('connected');
 
-      if (initialLoad) {
-        initialLoad = false;
-        if (!snapshot.exists) {
-          // No data in Firebase — push local state as seed
-          push(window.app.getState());
-        } else {
-          // Firebase has data — use it as source of truth
+      unsubscribe = docRef.onSnapshot(snapshot => {
+        if (!snapshot.exists || !snapshot.data().state) return;
+        const data = snapshot.data();
+        if (data._sender === senderId) return;
+        applying = true;
+        window.app.applyRemoteState(data.state);
+        applying = false;
+      }, err => {
+        setStatus('Sync error: ' + err.message, 'error');
+        setIndicator('error');
+      });
+    }).catch(err => {
+      // Server unreachable — try cache as fallback
+      docRef.get({ source: 'cache' }).then(snapshot => {
+        if (snapshot.exists && snapshot.data().state) {
           applying = true;
           window.app.applyRemoteState(snapshot.data().state);
           applying = false;
         }
-        return;
-      }
+        ready = true;
+        setStatus('Offline — using cached data', 'connected');
+        setIndicator('connected');
 
-      if (!snapshot.exists) return;
-      const data = snapshot.data();
-      if (data._sender === senderId) return;
-      if (data.state) {
-        applying = true;
-        window.app.applyRemoteState(data.state);
-        applying = false;
-      }
-    }, err => {
-      setStatus('Sync error: ' + err.message, 'error');
-      setIndicator('error');
+        unsubscribe = docRef.onSnapshot(snapshot => {
+          if (!snapshot.exists || !snapshot.data().state) return;
+          const data = snapshot.data();
+          if (data._sender === senderId) return;
+          applying = true;
+          window.app.applyRemoteState(data.state);
+          applying = false;
+        }, err => {
+          setStatus('Sync error: ' + err.message, 'error');
+          setIndicator('error');
+        });
+      }).catch(() => {
+        setStatus('Connection failed', 'error');
+        setIndicator('error');
+      });
     });
   }
 
@@ -158,15 +185,7 @@
     if (state) $indicator.classList.add(state);
   }
 
-  function hashKey(key) {
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
-    }
-    return Math.abs(hash).toString(36);
-  }
-
-  // Auth state listener — auto-start sync on sign-in
+  // Auth state listener
   auth.onAuthStateChanged(user => {
     updateAuthUI();
     if (user) {
@@ -174,13 +193,14 @@
     } else {
       cleanup();
       docPath = '';
+      ready = false;
       $indicator.classList.add('hidden');
     }
   });
 
-  // Re-push on wake / network restored
+  // Re-push on wake / network restored (only if ready)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && docPath && auth.currentUser) {
+    if (document.visibilityState === 'visible' && ready && docPath && auth.currentUser) {
       push(window.app.getState());
     }
   });
