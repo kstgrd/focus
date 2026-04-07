@@ -619,6 +619,68 @@ main {
   justify-content: flex-end;
 }
 
+/* --- Log modal --- */
+.log-modal-content {
+  max-width: 520px;
+}
+
+.log-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.log-tab {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.log-tab.active {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.log-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.log-period-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.log-chart-container {
+  width: 100%;
+  height: 200px;
+  position: relative;
+}
+
+.log-chart-container canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.log-summary {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-align: center;
+  min-height: 1.2em;
+}
+
 /* --- Responsive --- */
 @media (max-width: 480px) {
   .time-display { font-size: 2.5rem; }

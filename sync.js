@@ -1,4 +1,7 @@
-// --- Sync via ntfy.sh (WebSocket subscribe + HTTP publish) ---
+// --- Sync via ntfy.sh ---
+// - On connect: pull latest from topic (12h), merge logs, apply if newer, push back merged state
+// - On every local state change: push to topic
+// - WebSocket: receive live updates from other peers
 (function () {
   const SYNC_KEY_STORAGE = 'pomodoro-sync-key';
   const NTFY_BASE = 'https://ntfy.sh';
@@ -8,6 +11,7 @@
   let topic = '';
   let senderId = '';
   let reconnectTimeout = null;
+  let applying = false; // prevent push during remote apply
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -31,7 +35,13 @@
   $disconnectBtn.addEventListener('click', disconnect);
   $syncKey.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 
-  window.app.onStateChange(broadcast);
+  // On every LOCAL state change → debounced push to topic
+  let pushTimeout = null;
+  window.app.onStateChange(stateSnapshot => {
+    if (applying) return;
+    clearTimeout(pushTimeout);
+    pushTimeout = setTimeout(() => push(window.app.getState()), 2000);
+  });
 
   function connect() {
     const key = $syncKey.value.trim();
@@ -39,13 +49,12 @@
       setStatus('Enter a secret key', 'error');
       return;
     }
-
     const hash = hashKey(key);
     localStorage.setItem(SYNC_KEY_STORAGE, hash);
     startSync(hash);
   }
 
-  function startSync(hash) {
+  async function startSync(hash) {
     cleanup();
     topic = TOPIC_PREFIX + hash;
     senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
@@ -55,9 +64,12 @@
     $indicator.classList.remove('hidden');
     $connectBtn.disabled = true;
 
-    // Subscribe via WebSocket — since=10s catches recent live messages, avoids stale replays
+    // Initial sync: pull, merge, push
+    await initialSync();
+
+    // Subscribe via WebSocket for live updates
     const wsUrl = NTFY_BASE.replace('https:', 'wss:').replace('http:', 'ws:')
-      + '/' + topic + '/ws?since=10s';
+      + '/' + topic + '/ws';
 
     ws = new WebSocket(wsUrl);
 
@@ -65,7 +77,6 @@
       setStatus('Connected — syncing', 'connected');
       setIndicator('connected');
       showConnected();
-      broadcast(window.app.getState());
     };
 
     ws.onmessage = (e) => {
@@ -74,13 +85,19 @@
         if (ntfyMsg.event !== 'message') return;
         const msg = JSON.parse(ntfyMsg.message);
         if (msg._sender === senderId) return;
-        if (msg.data) window.app.applyRemoteState(msg.data);
-      } catch (err) {}
+        if (msg.data) {
+          applying = true;
+          window.app.applyRemoteState(msg.data);
+          applying = false;
+          // Push merged state back (log may have grown)
+          push(window.app.getState());
+        }
+      } catch (err) { applying = false; }
     };
 
     ws.onclose = () => {
       if (topic) {
-        setStatus('Disconnected — reconnecting...', '');
+        setStatus('Reconnecting...', '');
         setIndicator('connecting');
         reconnectTimeout = setTimeout(() => startSync(hash), 3000);
       }
@@ -92,7 +109,47 @@
     };
   }
 
-  function broadcast(stateSnapshot) {
+  // Pull latest from topic, merge, push back merged state
+  async function initialSync() {
+    try {
+      const remote = await pullLatest();
+      if (remote) {
+        applying = true;
+        window.app.applyRemoteState(remote);
+        applying = false;
+      }
+      // Always push after initial sync — either our state or the merged result
+      await push(window.app.getState());
+    } catch (err) {
+      applying = false;
+      // Network error — push local state as fallback
+      try { await push(window.app.getState()); } catch (e) {}
+    }
+  }
+
+  // Pull the latest message from the topic (12h cache)
+  async function pullLatest() {
+    const url = NTFY_BASE + '/' + topic + '/json?poll=1&since=12h';
+    const res = await fetch(url);
+    const text = await res.text();
+    if (!text.trim()) return null;
+
+    // ntfy returns one JSON object per line — take the last one
+    const lines = text.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const ntfyMsg = JSON.parse(lines[i]);
+        if (ntfyMsg.message) {
+          const msg = JSON.parse(ntfyMsg.message);
+          if (msg.data) return msg.data;
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  // Push state to the topic
+  function push(stateSnapshot) {
     if (!topic) return;
     const body = JSON.stringify({
       _sender: senderId,
@@ -155,22 +212,16 @@
     startSync(savedHash);
   }
 
-  // Reconnect on wake (phone screen on) or network restored
-  function checkConnection() {
-    if (!topic) return;
-    const hash = localStorage.getItem(SYNC_KEY_STORAGE);
-    if (!hash) return;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.log('[sync] stale connection, reconnecting');
-      startSync(hash);
-    } else {
-      // Connection alive — re-broadcast state so peers know we're back
-      broadcast(window.app.getState());
-    }
-  }
-
+  // Reconnect on wake / network restored
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') checkConnection();
+    if (document.visibilityState === 'visible' && topic) {
+      const hash = localStorage.getItem(SYNC_KEY_STORAGE);
+      if (hash && (!ws || ws.readyState !== WebSocket.OPEN)) startSync(hash);
+      else initialSync(); // re-sync even if WS is open
+    }
   });
-  window.addEventListener('online', checkConnection);
+  window.addEventListener('online', () => {
+    const hash = localStorage.getItem(SYNC_KEY_STORAGE);
+    if (hash) startSync(hash);
+  });
 })();

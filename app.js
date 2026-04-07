@@ -3,11 +3,15 @@ const DEFAULT_FOCUS = 25;
 const DEFAULT_BREAK = 5;
 const STORAGE_KEY = 'pomodoro-state';
 const SETTINGS_KEY = 'pomodoro-settings';
+const LOG_KEY = 'pomodoro-log';
 
 // --- Settings ---
 let settings = { goal: 8, focusMin: DEFAULT_FOCUS, breakMin: DEFAULT_BREAK, autoFocus: false, autoBreak: false, lastUpdate: 0 };
 const ROW_SIZE = 24;
 let builtFocusSlots = 0;
+
+// --- Daily log: { "2026-04-07": { completed: 5, goal: 8 }, ... } ---
+let log = {};
 
 // --- State (load from localStorage immediately to avoid flicker) ---
 let timerInterval = null;
@@ -30,6 +34,8 @@ let state = {
 // Load before any rendering
 loadSettings();
 loadState();
+loadLog();
+updateLogEntry(); // ensure today has an entry
 
 // --- DOM ---
 const $time = document.getElementById('time');
@@ -68,7 +74,8 @@ const $settingsBackdrop = $settingsModal.querySelector('.modal-backdrop');
 window.app = {
   onStateChange: function(cb) { stateChangeCallbacks.push(cb); },
   applyRemoteState: applyRemoteState,
-  getState: function() { return { ...state, settings: { ...settings } }; }
+  getState: function() { return { ...state, settings: { ...settings }, log: { ...log } }; },
+  getLog: function() { return log; }
 };
 
 // --- Init ---
@@ -246,9 +253,11 @@ function skipPhase() {
   state.isFocus = !state.isFocus;
   state.remainingAtStart = getTotalTime();
   state.lastUpdate = Date.now();
+  updateLogEntry();
   broadcastState();
   updateUI();
 }
+
 
 function startTicking() {
   stopTicking();
@@ -313,6 +322,7 @@ function completePhase() {
   state.lastUpdate = Date.now();
 
   playRingSound();
+  updateLogEntry();
   broadcastState();
   updateUI();
 
@@ -600,6 +610,32 @@ function loadState() {
   } catch (e) {}
 }
 
+function saveLog() {
+  localStorage.setItem(LOG_KEY, JSON.stringify(log));
+}
+
+function loadLog() {
+  try {
+    const raw = localStorage.getItem(LOG_KEY);
+    if (raw) log = JSON.parse(raw);
+  } catch (e) {}
+}
+
+function updateLogEntry() {
+  const today = todayStr();
+  if (log[today]) {
+    // Only update completed count, preserve original goal
+    log[today].completed = state.completedPomodoros;
+  } else {
+    // First entry for today — set goal once
+    log[today] = {
+      completed: state.completedPomodoros,
+      goal: settings.goal
+    };
+  }
+  saveLog();
+}
+
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
@@ -630,6 +666,8 @@ function broadcastState() {
 function checkDayReset() {
   const today = todayStr();
   if (state.date !== today) {
+    // Preserve yesterday's log before resetting
+    updateLogEntry();
     stopTicking();
     state.date = today;
     state.completedPomodoros = 0;
@@ -640,6 +678,7 @@ function checkDayReset() {
     state.remainingAtStart = settings.focusMin * 60;
     state.lastUpdate = Date.now();
     saveState();
+    updateLogEntry(); // create today's entry
   }
 }
 
@@ -736,6 +775,218 @@ function fireConfetti() {
   animate();
 }
 
+// --- Log modal & chart ---
+const $logBtn = document.getElementById('log-btn');
+const $logModal = document.getElementById('log-modal');
+const $logClose = document.getElementById('log-close');
+const $logBackdrop = $logModal.querySelector('.modal-backdrop');
+const $logChart = document.getElementById('log-chart');
+const $logSummary = document.getElementById('log-summary');
+const $logTabs = $logModal.querySelectorAll('.log-tab');
+const $logPrev = document.getElementById('log-prev');
+const $logNext = document.getElementById('log-next');
+const $logPeriodLabel = document.getElementById('log-period-label');
+let currentRange = 'week';
+let periodOffset = 0; // 0 = current period, -1 = previous, etc.
+
+$logBtn.addEventListener('click', () => {
+  periodOffset = 0;
+  $logModal.classList.remove('hidden');
+  drawChart(currentRange);
+});
+$logClose.addEventListener('click', () => $logModal.classList.add('hidden'));
+$logBackdrop.addEventListener('click', () => $logModal.classList.add('hidden'));
+
+$logTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    $logTabs.forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentRange = tab.dataset.range;
+    periodOffset = 0;
+    drawChart(currentRange);
+  });
+});
+
+$logPrev.addEventListener('click', () => { periodOffset--; drawChart(currentRange); });
+$logNext.addEventListener('click', () => { periodOffset++; drawChart(currentRange); });
+
+function drawChart(range) {
+  const canvas = $logChart;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+
+  let data;
+  let periodLabel;
+  if (range === 'year') {
+    const result = getYearData(periodOffset);
+    data = result.data;
+    periodLabel = result.label;
+  } else {
+    const result = getDaysData(range, periodOffset);
+    data = result.data;
+    periodLabel = result.label;
+  }
+  $logPeriodLabel.textContent = periodLabel;
+
+  if (data.length === 0) return;
+
+  const maxVal = Math.max(1, ...data.map(d => Math.max(d.completed, d.goal)));
+  const padTop = 20;
+  const padBottom = 30;
+  const padLeft = 30;
+  const padRight = 10;
+  const chartW = W - padLeft - padRight;
+  const chartH = H - padTop - padBottom;
+  const barW = Math.max(4, (chartW / data.length) * 0.6);
+  const gap = chartW / data.length;
+
+  // Y axis labels
+  ctx.fillStyle = '#a7a9be';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+  const ySteps = Math.min(maxVal, 5);
+  for (let i = 0; i <= ySteps; i++) {
+    const val = Math.round(maxVal * i / ySteps);
+    const y = padTop + chartH - (chartH * i / ySteps);
+    ctx.fillText(val, padLeft - 6, y + 3);
+    // grid line
+    ctx.strokeStyle = '#1a193220';
+    ctx.beginPath();
+    ctx.moveTo(padLeft, y);
+    ctx.lineTo(W - padRight, y);
+    ctx.stroke();
+  }
+
+  // Bars and goal line
+  const goalPoints = [];
+
+  data.forEach((d, i) => {
+    const x = padLeft + i * gap + gap / 2;
+    const barH = (d.completed / maxVal) * chartH;
+    const y = padTop + chartH - barH;
+
+    // Bar
+    const met = d.completed >= d.goal && d.goal > 0;
+    ctx.fillStyle = met ? '#00897b' : '#d63031';
+    ctx.beginPath();
+    roundedRect(ctx, x - barW / 2, y, barW, barH, 3);
+    ctx.fill();
+
+    // Goal dot for line
+    const goalY = padTop + chartH - (d.goal / maxVal) * chartH;
+    goalPoints.push({ x, y: goalY });
+
+    // X label
+    ctx.fillStyle = '#a7a9be';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(d.label, x, H - padBottom + 14);
+  });
+
+  // Goal line
+  if (goalPoints.length > 1) {
+    ctx.strokeStyle = '#a7a9be88';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    goalPoints.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Summary
+  const totalCompleted = data.reduce((s, d) => s + d.completed, 0);
+  const totalGoal = data.reduce((s, d) => s + d.goal, 0);
+  const daysWithData = data.filter(d => d.completed > 0).length;
+  $logSummary.textContent = `${totalCompleted} sessions completed across ${daysWithData} day${daysWithData !== 1 ? 's' : ''}`;
+}
+
+function getDaysData(range, offset) {
+  const data = [];
+  const today = new Date();
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let start, count, label;
+
+  if (range === 'week') {
+    start = new Date(today);
+    start.setDate(start.getDate() - start.getDay() + offset * 7);
+    count = 7;
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    label = monthNames[start.getMonth()] + ' ' + start.getDate() + ' – ' + monthNames[end.getMonth()] + ' ' + end.getDate();
+  } else {
+    const m = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    start = m;
+    count = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
+    label = monthNames[m.getMonth()] + ' ' + m.getFullYear();
+  }
+
+  for (let i = 0; i < count; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    const entry = log[key] || { completed: 0, goal: settings.goal };
+    const dayLabel = range === 'week' ? dayNames[d.getDay()] : String(d.getDate());
+    data.push({ label: dayLabel, completed: entry.completed, goal: entry.goal });
+  }
+  return { data, label };
+}
+
+function getYearData(offset) {
+  const data = [];
+  const today = new Date();
+  const year = today.getFullYear() + offset;
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  for (let i = 0; i < 12; i++) {
+    const month = i;
+    let totalCompleted = 0;
+    let totalGoal = 0;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    let daysWithEntries = 0;
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      if (log[key]) {
+        totalCompleted += log[key].completed;
+        totalGoal += log[key].goal;
+        daysWithEntries++;
+      }
+    }
+
+    data.push({
+      label: monthNames[month],
+      completed: daysWithEntries > 0 ? Math.round(totalCompleted / daysWithEntries) : 0,
+      goal: daysWithEntries > 0 ? Math.round(totalGoal / daysWithEntries) : 0
+    });
+  }
+  return { data, label: String(year) };
+}
+
+function roundedRect(ctx, x, y, w, h, r) {
+  if (h < 1) { ctx.rect(x, y, w, h); return; }
+  r = Math.min(r, h / 2, w / 2);
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x, y + h);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
 // --- PWA ---
 function registerSW() {
   if ('serviceWorker' in navigator) {
@@ -745,26 +996,55 @@ function registerSW() {
 
 // --- Sync ---
 function applyRemoteState(remote) {
+  // Always merge logs regardless of version — logs are append-only
+  mergeLog(remote.log);
+
+  // Timer state: version-based resolution
   const rv = remote.version || 0;
   const lv = state.version || 0;
 
   if (rv > lv) {
-    // Remote has higher version — accept it
     doApplyRemoteState(remote);
-  } else if (rv < lv) {
-    // We have higher version — push ours to the lagging peer
-    broadcastState();
-  } else {
+  } else if (rv === lv) {
     // Same version — oldest connectedSince wins
     const rc = remote.connectedSince || 0;
     const lc = state.connectedSince || 0;
     if (rc < lc) {
       doApplyRemoteState(remote);
-    } else if (rc > lc) {
-      broadcastState();
     }
-    // Exactly equal — no action needed, states are in sync
   }
+  // If local version >= remote, we keep our state.
+  // sync.js handles pushing merged state back after this returns.
+}
+
+// Merge remote log into local. Returns true if local had entries remote was missing.
+function mergeLog(remoteLog) {
+  if (!remoteLog) return false;
+  let localHadExtra = false;
+
+  // Check if we have entries remote doesn't
+  for (const date of Object.keys(log)) {
+    if (!remoteLog[date]) {
+      localHadExtra = true;
+      break;
+    }
+    if (log[date].completed > (remoteLog[date]?.completed || 0)) {
+      localHadExtra = true;
+      break;
+    }
+  }
+
+  // Merge remote into local
+  for (const [date, entry] of Object.entries(remoteLog)) {
+    if (!log[date]) {
+      log[date] = entry;
+    } else if (entry.completed > log[date].completed) {
+      log[date].completed = entry.completed;
+    }
+  }
+  saveLog();
+
+  return localHadExtra;
 }
 
 function doApplyRemoteState(remote) {
@@ -800,6 +1080,7 @@ function doApplyRemoteState(remote) {
     stopTicking();
   }
 
+  updateLogEntry();
   saveState();
   updateUI();
 }

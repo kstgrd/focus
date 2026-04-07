@@ -25,6 +25,11 @@
     <header>
       <h1>Pomodoro</h1>
       <div class="header-actions">
+        <button id="log-btn" class="icon-btn" title="Progress Log">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
+          </svg>
+        </button>
         <button id="settings-btn" class="icon-btn" title="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -128,6 +133,35 @@
       <div class="modal-actions">
         <button id="settings-save" class="btn btn-primary">Save</button>
         <button id="settings-close" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Modal -->
+  <div id="log-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content log-modal-content">
+      <h2>Progress Log</h2>
+      <div class="log-tabs">
+        <button class="log-tab active" data-range="week">Week</button>
+        <button class="log-tab" data-range="month">Month</button>
+        <button class="log-tab" data-range="year">Year</button>
+      </div>
+      <div class="log-nav">
+        <button id="log-prev" class="icon-btn" title="Previous">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span id="log-period-label" class="log-period-label"></span>
+        <button id="log-next" class="icon-btn" title="Next">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+      <div class="log-chart-container">
+        <canvas id="log-chart"></canvas>
+      </div>
+      <div class="log-summary" id="log-summary"></div>
+      <div class="modal-actions">
+        <button id="log-close" class="btn btn-ghost">Close</button>
       </div>
     </div>
   </div>
