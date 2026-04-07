@@ -22,7 +22,8 @@ let state = {
   completedPomodoros: 0,
   completedBreaks: 0,
   date: todayStr(),
-  lastUpdate: Date.now()
+  lastUpdate: Date.now(),
+  connectedSince: Date.now()
 };
 
 // Load before any rendering
@@ -66,7 +67,6 @@ const $settingsBackdrop = $settingsModal.querySelector('.modal-backdrop');
 window.app = {
   onStateChange: function(cb) { stateChangeCallbacks.push(cb); },
   applyRemoteState: applyRemoteState,
-  forceApplyRemoteState: forceApplyRemoteState,
   getState: function() { return { ...state, settings: { ...settings } }; }
 };
 
@@ -575,7 +575,8 @@ function saveState() {
     completedPomodoros: state.completedPomodoros,
     completedBreaks: state.completedBreaks,
     date: state.date,
-    lastUpdate: state.lastUpdate
+    lastUpdate: state.lastUpdate,
+    connectedSince: state.connectedSince
   }));
 }
 
@@ -592,6 +593,7 @@ function loadState() {
     state.completedBreaks = d.completedBreaks ?? 0;
     state.date = d.date ?? todayStr();
     state.lastUpdate = d.lastUpdate ?? Date.now();
+    state.connectedSince = d.connectedSince ?? Date.now();
   } catch (e) {}
 }
 
@@ -738,13 +740,22 @@ function registerSW() {
 
 // --- Sync ---
 function applyRemoteState(remote) {
-  if (remote.lastUpdate <= state.lastUpdate) return;
-  doApplyRemoteState(remote);
-}
+  // Oldest connectedSince is the source of truth
+  const remoteConnected = remote.connectedSince || 0;
+  const localConnected = state.connectedSince || 0;
 
-function forceApplyRemoteState(remote) {
-  console.log('[app] forceApplyRemoteState from host');
-  doApplyRemoteState(remote);
+  if (remoteConnected < localConnected) {
+    // Remote has been connected longer — they're authoritative
+    doApplyRemoteState(remote);
+  } else if (remoteConnected > localConnected) {
+    // We've been connected longer — ignore remote, broadcast ours
+    broadcastState();
+  } else {
+    // Same connectedSince (or both 0) — fall back to lastUpdate
+    if (remote.lastUpdate > state.lastUpdate) {
+      doApplyRemoteState(remote);
+    }
+  }
 }
 
 function doApplyRemoteState(remote) {
