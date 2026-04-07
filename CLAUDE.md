@@ -14,7 +14,7 @@
 - Firestore security rules require authentication (`request.auth != null`)
 
 ## State Management (`app.js`)
-- Timer state stored in `localStorage` under key `pomodoro-state`
-- Settings stored under `pomodoro-settings`
-- `window.app` exposes `getState()`, `applyRemoteState()`, `onStateChange()` for sync
+- No localStorage — Firestore is the single source of truth
+- `window.app` exposes `getState()`, `applyRemoteState()`, `onStateChange()`, `initWithState()` for sync
+- `initWithState()` is called by sync.js once Firebase state loads, then reveals the page
 - `applyRemoteState` uses `lastUpdate` timestamp to resolve conflicts (latest wins)

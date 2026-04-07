@@ -11,13 +11,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="style.css">
   <script>
-    // Apply saved state before first paint to prevent color flash
+    // Keep page hidden until Firebase state loads
     document.documentElement.style.visibility = 'hidden';
-    try {
-      var _s = JSON.parse(localStorage.getItem('pomodoro-state'));
-      if (_s && !_s.isFocus)
-        document.documentElement.style.setProperty('--phase-color', '#00897b');
-    } catch(e) {}
   </script>
 </head>
 <body>

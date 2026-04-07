@@ -1,9 +1,6 @@
 // --- Constants ---
 const DEFAULT_FOCUS = 25;
 const DEFAULT_BREAK = 5;
-const STORAGE_KEY = 'pomodoro-state';
-const SETTINGS_KEY = 'pomodoro-settings';
-const LOG_KEY = 'pomodoro-log';
 
 // --- Settings ---
 let settings = { goal: 8, focusMin: DEFAULT_FOCUS, breakMin: DEFAULT_BREAK, autoFocus: false, autoBreak: false, lastUpdate: 0 };
@@ -13,7 +10,7 @@ let builtFocusSlots = 0;
 // --- Daily log: { "2026-04-07": { completed: 5, goal: 8 }, ... } ---
 let log = {};
 
-// --- State (load from localStorage immediately to avoid flicker) ---
+// --- State ---
 let timerInterval = null;
 let completionTimeout = null;
 let stateChangeCallbacks = [];
@@ -30,12 +27,6 @@ let state = {
   connectedSince: Date.now(),
   version: 0
 };
-
-// Load before any rendering
-loadSettings();
-loadState();
-loadLog();
-updateLogEntry(); // ensure today has an entry
 
 // --- DOM ---
 const $time = document.getElementById('time');
@@ -75,15 +66,32 @@ window.app = {
   onStateChange: function(cb) { stateChangeCallbacks.push(cb); },
   applyRemoteState: applyRemoteState,
   getState: function() { return { ...state, settings: { ...settings }, log: { ...log } }; },
-  getLog: function() { return log; }
+  getLog: function() { return log; },
+  loadLocal: function() { return localDB.load(); },
+  // Called by sync.js once Firebase state is loaded (or defaults if first-ever sync)
+  initWithState: function(remoteState) {
+    if (remoteState) {
+      doApplyRemoteState(remoteState);
+      if (remoteState.settings) {
+        const s = remoteState.settings;
+        if (s.goal >= 1 && s.goal <= 20) settings.goal = s.goal;
+        if (s.focusMin >= 1 && s.focusMin <= 120) settings.focusMin = s.focusMin;
+        if (s.breakMin >= 1 && s.breakMin <= 30) settings.breakMin = s.breakMin;
+        if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
+        if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
+        if (typeof s.lastUpdate === 'number') settings.lastUpdate = s.lastUpdate;
+      }
+      if (remoteState.log) mergeLog(remoteState.log);
+    }
+    buildSegments();
+    reconstructTimer();
+    updateUI();
+    saveLocal();
+    document.documentElement.style.visibility = '';
+  }
 };
 
-// --- Init ---
-buildSegments();
-reconstructTimer();
-updateUI();
-// Reveal page — inline script in <head> hid it to prevent flash
-document.documentElement.style.visibility = '';
+// --- Init (minimal — full init happens in initWithState) ---
 registerSW();
 
 // --- Events ---
@@ -203,7 +211,6 @@ $settingsSave.addEventListener('click', () => {
   settings.autoBreak = $autoBreakInput.checked;
   settings.lastUpdate = Date.now();
 
-  saveSettings();
   state.lastUpdate = Date.now();
   if (!state.isRunning) {
     state.remainingAtStart = getTotalTime();
@@ -596,90 +603,63 @@ function playRingSound() {
   } catch (e) {}
 }
 
-// --- localStorage persistence ---
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    isFocus: state.isFocus,
-    isRunning: state.isRunning,
-    startedAt: state.startedAt,
-    remainingAtStart: state.remainingAtStart,
-    completedPomodoros: state.completedPomodoros,
-    completedBreaks: state.completedBreaks,
-    date: state.date,
-    lastUpdate: state.lastUpdate,
-    connectedSince: state.connectedSince,
-    version: state.version
-  }));
-}
+// --- Local persistence (IndexedDB) ---
+// Always saves locally. Firebase overrides when signed in.
+const localDB = (function () {
+  const DB_NAME = 'pomodoro';
+  const STORE = 'state';
+  let db = null;
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const d = JSON.parse(raw);
-    state.isFocus = d.isFocus ?? true;
-    state.isRunning = d.isRunning ?? false;
-    state.startedAt = d.startedAt ?? null;
-    state.remainingAtStart = d.remainingAtStart ?? settings.focusMin * 60;
-    state.completedPomodoros = d.completedPomodoros ?? 0;
-    state.completedBreaks = d.completedBreaks ?? 0;
-    state.date = d.date ?? todayStr();
-    state.lastUpdate = d.lastUpdate ?? Date.now();
-    state.connectedSince = d.connectedSince ?? Date.now();
-    state.version = d.version ?? 0;
-  } catch (e) {}
-}
+  function open() {
+    if (db) return Promise.resolve(db);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+      req.onsuccess = () => { db = req.result; resolve(db); };
+      req.onerror = () => reject(req.error);
+    });
+  }
 
-function saveLog() {
-  localStorage.setItem(LOG_KEY, JSON.stringify(log));
-}
+  return {
+    save(data) {
+      open().then(db => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(data, 'current');
+      }).catch(() => {});
+    },
+    load() {
+      return open().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readonly');
+        const req = tx.objectStore(STORE).get('current');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      })).catch(() => null);
+    }
+  };
+})();
 
-function loadLog() {
-  try {
-    const raw = localStorage.getItem(LOG_KEY);
-    if (raw) log = JSON.parse(raw);
-  } catch (e) {}
+function saveLocal() {
+  localDB.save(window.app.getState());
 }
 
 function updateLogEntry() {
   const today = todayStr();
   if (log[today]) {
-    // Only update completed count, preserve original goal
     log[today].completed = state.completedPomodoros;
   } else {
-    // First entry for today — set goal once
     log[today] = {
       completed: state.completedPomodoros,
       goal: settings.goal
     };
   }
-  saveLog();
-}
-
-function saveSettings() {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-}
-
-function loadSettings() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return;
-    const d = JSON.parse(raw);
-    if (d.goal >= 1 && d.goal <= 20) settings.goal = d.goal;
-    if (d.focusMin >= 1 && d.focusMin <= 120) settings.focusMin = d.focusMin;
-    if (d.breakMin >= 1 && d.breakMin <= 30) settings.breakMin = d.breakMin;
-    if (typeof d.autoFocus === 'boolean') settings.autoFocus = d.autoFocus;
-    if (typeof d.autoBreak === 'boolean') settings.autoBreak = d.autoBreak;
-    if (typeof d.lastUpdate === 'number') settings.lastUpdate = d.lastUpdate;
-  } catch (e) {}
 }
 
 function broadcastState() {
   state.version++;
   state.lastUpdate = Date.now();
-  saveState();
-  const snapshot = { ...state, settings: { ...settings } };
+  const snapshot = { ...state, settings: { ...settings }, log: { ...log } };
   stateChangeCallbacks.forEach(cb => cb(snapshot));
+  saveLocal();
   updateUI();
 }
 
@@ -697,7 +677,6 @@ function checkDayReset() {
     state.startedAt = null;
     state.remainingAtStart = settings.focusMin * 60;
     state.lastUpdate = Date.now();
-    saveState();
     updateLogEntry(); // create today's entry
   }
 }
@@ -1084,7 +1063,6 @@ function mergeLog(remoteLog) {
       log[date].completed = entry.completed;
     }
   }
-  saveLog();
 
   return localHadExtra;
 }
@@ -1112,7 +1090,6 @@ function doApplyRemoteState(remote) {
     if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
     if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
     if (typeof s.lastUpdate === 'number') settings.lastUpdate = s.lastUpdate;
-    saveSettings();
     buildSegments();
   }
 
@@ -1123,6 +1100,5 @@ function doApplyRemoteState(remote) {
   }
 
   updateLogEntry();
-  saveState();
   updateUI();
 }
