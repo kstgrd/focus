@@ -604,6 +604,26 @@ main {
 .input-group input:focus { border-color: var(--break); }
 .input-group input::placeholder { color: var(--text-dim); opacity: 0.5; }
 
+.btn-google {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s;
+  justify-content: center;
+}
+
+.btn-google:hover { background: var(--surface); }
+.btn-google:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .sync-status {
   font-size: 0.8rem;
   color: var(--text-dim);
