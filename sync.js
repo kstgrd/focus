@@ -153,7 +153,7 @@
 
     // Conflict — show page with local data, prompt user
     window.app.initWithState(localData);
-    showConflictModal(localData, cloudState, snapshot.data().updatedAt, choice => {
+    showConflictModal(localData, cloudState, choice => {
       if (choice === 'local') {
         forcePush(window.app.getState());
       } else {
@@ -172,18 +172,17 @@
     return false;
   }
 
-  function stateDescription(s, updatedAt) {
+  function stateDescription(s) {
     const phase = s.isFocus ? 'Focus' : 'Break';
     const running = s.isRunning ? 'running' : 'paused';
     const date = s.date || '—';
     const pomos = s.completedPomodoros || 0;
-    const updated = updatedAt ? updatedAt.toDate().toLocaleString() : '—';
-    return date + ' · ' + pomos + ' sessions · ' + phase + ' (' + running + ')\nUpdated: ' + updated;
+    return date + ' · ' + pomos + ' sessions · ' + phase + ' (' + running + ')';
   }
 
-  function showConflictModal(localState, cloudState, cloudUpdatedAt, callback) {
+  function showConflictModal(localState, cloudState, callback) {
     $conflictLocalDetail.textContent = stateDescription(localState);
-    $conflictCloudDetail.textContent = stateDescription(cloudState, cloudUpdatedAt);
+    $conflictCloudDetail.textContent = stateDescription(cloudState);
     $conflictModal.classList.remove('hidden');
 
     function choose(choice) {
@@ -269,6 +268,7 @@
     if (document.visibilityState === 'visible' && ready && docPath && auth.currentUser) {
       ready = false;
       clearTimeout(pushTimeout);
+      window.app.showToast('Syncing…');
       const docRef = db.doc(docPath);
       docRef.get({ source: 'server' }).then(snapshot => {
         if (!snapshot.exists || !snapshot.data().state) { ready = true; return; }
@@ -283,7 +283,7 @@
           return;
         }
 
-        showConflictModal(localState, cloudState, snapshot.data().updatedAt, choice => {
+        showConflictModal(localState, cloudState, choice => {
           if (choice === 'local') {
             forcePush(window.app.getState());
           } else {

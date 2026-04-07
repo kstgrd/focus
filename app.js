@@ -62,6 +62,7 @@ const $settingsBackdrop = $settingsModal.querySelector('.modal-backdrop');
 window.app = {
   onStateChange: function(cb) { stateChangeCallbacks.push(cb); },
   applyRemoteState: applyRemoteState,
+  showToast: showToast,
   getState: function() { return { ...state, settings: { ...settings }, log: { ...log } }; },
   getLog: function() { return log; },
   loadLocal: function() { return localDB.load(); },
@@ -685,8 +686,9 @@ function celebrate() {
   fireConfetti();
 }
 
-function showToast() {
+function showToast(message) {
   const $toast = document.getElementById('toast');
+  if (message) $toast.textContent = message;
   $toast.classList.remove('hidden');
   // Force reflow so transition triggers
   $toast.offsetHeight;
