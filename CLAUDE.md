@@ -17,4 +17,4 @@
 - No localStorage — Firestore is the single source of truth
 - `window.app` exposes `getState()`, `applyRemoteState()`, `onStateChange()`, `initWithState()` for sync
 - `initWithState()` is called by sync.js once Firebase state loads, then reveals the page
-- `applyRemoteState` uses `lastUpdate` timestamp to resolve conflicts (latest wins)
+- `applyRemoteState` always applies remote state; logs are merged (append-only)

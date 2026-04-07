@@ -153,7 +153,7 @@
 
     // Conflict — show page with local data, prompt user
     window.app.initWithState(localData);
-    showConflictModal(localData, cloudState, choice => {
+    showConflictModal(localData, cloudState, snapshot.data().updatedAt, choice => {
       if (choice === 'local') {
         forcePush(window.app.getState());
       } else {
@@ -172,18 +172,18 @@
     return false;
   }
 
-  function stateDescription(s) {
+  function stateDescription(s, updatedAt) {
     const phase = s.isFocus ? 'Focus' : 'Break';
     const running = s.isRunning ? 'running' : 'paused';
     const date = s.date || '—';
     const pomos = s.completedPomodoros || 0;
-    const updated = s.lastUpdate ? new Date(s.lastUpdate).toLocaleString() : '—';
+    const updated = updatedAt ? updatedAt.toDate().toLocaleString() : '—';
     return date + ' · ' + pomos + ' sessions · ' + phase + ' (' + running + ')\nUpdated: ' + updated;
   }
 
-  function showConflictModal(localState, cloudState, callback) {
+  function showConflictModal(localState, cloudState, cloudUpdatedAt, callback) {
     $conflictLocalDetail.textContent = stateDescription(localState);
-    $conflictCloudDetail.textContent = stateDescription(cloudState);
+    $conflictCloudDetail.textContent = stateDescription(cloudState, cloudUpdatedAt);
     $conflictModal.classList.remove('hidden');
 
     function choose(choice) {
@@ -262,31 +262,36 @@
   });
 
   // On wake: re-sync with Firebase
+  // Pause pushes until we've fetched the latest cloud state to avoid
+  // overwriting newer data with stale local state (e.g. phone waking up
+  // after PC already completed the session).
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && ready && docPath && auth.currentUser) {
+      ready = false;
+      clearTimeout(pushTimeout);
       const docRef = db.doc(docPath);
       docRef.get({ source: 'server' }).then(snapshot => {
-        if (!snapshot.exists || !snapshot.data().state) return;
+        if (!snapshot.exists || !snapshot.data().state) { ready = true; return; }
         const cloudState = snapshot.data().state;
         const localState = window.app.getState();
 
         if (!hasConflict(localState, cloudState)) {
-          if ((cloudState.lastUpdate || 0) > (localState.lastUpdate || 0)) {
-            applying = true;
-            window.app.applyRemoteState(cloudState);
-            applying = false;
-          }
+          applying = true;
+          window.app.applyRemoteState(cloudState);
+          applying = false;
+          ready = true;
           return;
         }
 
-        showConflictModal(localState, cloudState, choice => {
+        showConflictModal(localState, cloudState, snapshot.data().updatedAt, choice => {
           if (choice === 'local') {
             forcePush(window.app.getState());
           } else {
             window.app.initWithState(cloudState);
           }
+          ready = true;
         });
-      }).catch(() => {});
+      }).catch(() => { ready = true; });
     }
   });
 })();

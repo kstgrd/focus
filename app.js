@@ -3,7 +3,7 @@ const DEFAULT_FOCUS = 25;
 const DEFAULT_BREAK = 5;
 
 // --- Settings ---
-let settings = { goal: 8, focusMin: DEFAULT_FOCUS, breakMin: DEFAULT_BREAK, autoFocus: false, autoBreak: false, lastUpdate: 0 };
+let settings = { goal: 8, focusMin: DEFAULT_FOCUS, breakMin: DEFAULT_BREAK, autoFocus: false, autoBreak: false };
 const ROW_SIZE = 24;
 let builtFocusSlots = 0;
 
@@ -22,10 +22,7 @@ let state = {
   remainingAtStart: DEFAULT_FOCUS * 60,
   completedPomodoros: 0,
   completedBreaks: 0,
-  date: todayStr(),
-  lastUpdate: Date.now(),
-  connectedSince: Date.now(),
-  version: 0
+  date: todayStr()
 };
 
 // --- DOM ---
@@ -79,7 +76,7 @@ window.app = {
         if (s.breakMin >= 1 && s.breakMin <= 30) settings.breakMin = s.breakMin;
         if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
         if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
-        if (typeof s.lastUpdate === 'number') settings.lastUpdate = s.lastUpdate;
+
       }
       if (remoteState.log) mergeLog(remoteState.log);
     }
@@ -192,7 +189,7 @@ function resetDay() {
   state.remainingAtStart = settings.focusMin * 60;
   state.completedPomodoros = 0;
   state.completedBreaks = 0;
-  state.lastUpdate = Date.now();
+
   updateLogEntry();
   buildSegments();
   broadcastState();
@@ -209,9 +206,8 @@ $settingsSave.addEventListener('click', () => {
   settings.goal = Math.min(Math.max(1, goal), max);
   settings.autoFocus = $autoFocusInput.checked;
   settings.autoBreak = $autoBreakInput.checked;
-  settings.lastUpdate = Date.now();
 
-  state.lastUpdate = Date.now();
+
   if (!state.isRunning) {
     state.remainingAtStart = getTotalTime();
   }
@@ -237,7 +233,7 @@ function startTimer() {
   requestNotificationPermission();
   state.isRunning = true;
   state.startedAt = Date.now();
-  state.lastUpdate = Date.now();
+
   startTicking();
   playStartSound();
   broadcastState();
@@ -248,7 +244,7 @@ function pauseTimer() {
   state.remainingAtStart = getTimeRemaining();
   state.isRunning = false;
   state.startedAt = null;
-  state.lastUpdate = Date.now();
+
   stopTicking();
   broadcastState();
 }
@@ -258,7 +254,7 @@ function restartTimer() {
   state.isRunning = false;
   state.startedAt = null;
   state.remainingAtStart = getTotalTime();
-  state.lastUpdate = Date.now();
+
   broadcastState();
   updateUI();
 }
@@ -276,7 +272,7 @@ function skipPhase() {
 
   state.isFocus = !state.isFocus;
   state.remainingAtStart = getTotalTime();
-  state.lastUpdate = Date.now();
+
   updateLogEntry();
   broadcastState();
   updateUI();
@@ -343,7 +339,7 @@ function completePhase() {
 
   state.isFocus = !state.isFocus;
   state.remainingAtStart = getTotalTime();
-  state.lastUpdate = Date.now();
+
 
   playRingSound();
   showNotification(state.isFocus
@@ -655,8 +651,6 @@ function updateLogEntry() {
 }
 
 function broadcastState() {
-  state.version++;
-  state.lastUpdate = Date.now();
   const snapshot = { ...state, settings: { ...settings }, log: { ...log } };
   stateChangeCallbacks.forEach(cb => cb(snapshot));
   saveLocal();
@@ -676,7 +670,7 @@ function checkDayReset() {
     state.isRunning = false;
     state.startedAt = null;
     state.remainingAtStart = settings.focusMin * 60;
-    state.lastUpdate = Date.now();
+  
     updateLogEntry(); // create today's entry
   }
 }
@@ -1017,25 +1011,8 @@ function registerSW() {
 
 // --- Sync ---
 function applyRemoteState(remote) {
-  // Always merge logs regardless of version — logs are append-only
   mergeLog(remote.log);
-
-  // Timer state: version-based resolution
-  const rv = remote.version || 0;
-  const lv = state.version || 0;
-
-  if (rv > lv) {
-    doApplyRemoteState(remote);
-  } else if (rv === lv) {
-    // Same version — oldest connectedSince wins
-    const rc = remote.connectedSince || 0;
-    const lc = state.connectedSince || 0;
-    if (rc < lc) {
-      doApplyRemoteState(remote);
-    }
-  }
-  // If local version >= remote, we keep our state.
-  // sync.js handles pushing merged state back after this returns.
+  doApplyRemoteState(remote);
 }
 
 // Merge remote log into local. Returns true if local had entries remote was missing.
@@ -1077,9 +1054,6 @@ function doApplyRemoteState(remote) {
   state.completedPomodoros = remote.completedPomodoros;
   state.completedBreaks = remote.completedBreaks;
   state.date = remote.date;
-  state.lastUpdate = remote.lastUpdate;
-  state.version = remote.version || 0;
-  state.connectedSince = remote.connectedSince || state.connectedSince;
 
   // Apply settings if included
   if (remote.settings) {
@@ -1089,7 +1063,6 @@ function doApplyRemoteState(remote) {
     if (s.breakMin >= 1 && s.breakMin <= 30) settings.breakMin = s.breakMin;
     if (typeof s.autoFocus === 'boolean') settings.autoFocus = s.autoFocus;
     if (typeof s.autoBreak === 'boolean') settings.autoBreak = s.autoBreak;
-    if (typeof s.lastUpdate === 'number') settings.lastUpdate = s.lastUpdate;
     buildSegments();
   }
 
