@@ -23,7 +23,8 @@ let state = {
   completedBreaks: 0,
   date: todayStr(),
   lastUpdate: Date.now(),
-  connectedSince: Date.now()
+  connectedSince: Date.now(),
+  version: 0
 };
 
 // Load before any rendering
@@ -576,7 +577,8 @@ function saveState() {
     completedBreaks: state.completedBreaks,
     date: state.date,
     lastUpdate: state.lastUpdate,
-    connectedSince: state.connectedSince
+    connectedSince: state.connectedSince,
+    version: state.version
   }));
 }
 
@@ -594,6 +596,7 @@ function loadState() {
     state.date = d.date ?? todayStr();
     state.lastUpdate = d.lastUpdate ?? Date.now();
     state.connectedSince = d.connectedSince ?? Date.now();
+    state.version = d.version ?? 0;
   } catch (e) {}
 }
 
@@ -616,6 +619,8 @@ function loadSettings() {
 }
 
 function broadcastState() {
+  state.version++;
+  state.lastUpdate = Date.now();
   saveState();
   const snapshot = { ...state, settings: { ...settings } };
   stateChangeCallbacks.forEach(cb => cb(snapshot));
@@ -740,21 +745,25 @@ function registerSW() {
 
 // --- Sync ---
 function applyRemoteState(remote) {
-  // Oldest connectedSince is the source of truth
-  const remoteConnected = remote.connectedSince || 0;
-  const localConnected = state.connectedSince || 0;
+  const rv = remote.version || 0;
+  const lv = state.version || 0;
 
-  if (remoteConnected < localConnected) {
-    // Remote has been connected longer — they're authoritative
+  if (rv > lv) {
+    // Remote has higher version — accept it
     doApplyRemoteState(remote);
-  } else if (remoteConnected > localConnected) {
-    // We've been connected longer — ignore remote, broadcast ours
+  } else if (rv < lv) {
+    // We have higher version — push ours to the lagging peer
     broadcastState();
   } else {
-    // Same connectedSince (or both 0) — fall back to lastUpdate
-    if (remote.lastUpdate > state.lastUpdate) {
+    // Same version — oldest connectedSince wins
+    const rc = remote.connectedSince || 0;
+    const lc = state.connectedSince || 0;
+    if (rc < lc) {
       doApplyRemoteState(remote);
+    } else if (rc > lc) {
+      broadcastState();
     }
+    // Exactly equal — no action needed, states are in sync
   }
 }
 
@@ -769,6 +778,8 @@ function doApplyRemoteState(remote) {
   state.completedBreaks = remote.completedBreaks;
   state.date = remote.date;
   state.lastUpdate = remote.lastUpdate;
+  state.version = remote.version || 0;
+  state.connectedSince = remote.connectedSince || state.connectedSince;
 
   // Apply settings if included
   if (remote.settings) {
