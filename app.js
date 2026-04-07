@@ -301,12 +301,12 @@ function scheduleCompletion() {
   clearTimeout(completionTimeout);
   if (!state.isRunning) return;
   const ms = getTimeRemaining() * 1000;
-  if (ms <= 0) {
+  if (ms <= 0 && !window.syncing) {
     completePhase();
     return;
   }
   completionTimeout = setTimeout(() => {
-    if (state.isRunning) completePhase();
+    if (state.isRunning && !window.syncing) completePhase();
   }, ms);
 }
 
@@ -319,8 +319,9 @@ function tick() {
 }
 
 // Catch up immediately when tab becomes visible again
+// (skipped while sync.js is fetching fresh cloud state)
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.isRunning) {
+  if (document.visibilityState === 'visible' && state.isRunning && !window.syncing) {
     tick();
   }
 });

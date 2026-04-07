@@ -267,11 +267,12 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && ready && docPath && auth.currentUser) {
       ready = false;
+      window.syncing = true;
       clearTimeout(pushTimeout);
       window.app.showToast('Syncing…');
       const docRef = db.doc(docPath);
       docRef.get({ source: 'server' }).then(snapshot => {
-        if (!snapshot.exists || !snapshot.data().state) { ready = true; return; }
+        if (!snapshot.exists || !snapshot.data().state) { window.syncing = false; ready = true; return; }
         const cloudState = snapshot.data().state;
         const localState = window.app.getState();
 
@@ -279,6 +280,7 @@
           applying = true;
           window.app.applyRemoteState(cloudState);
           applying = false;
+          window.syncing = false;
           ready = true;
           return;
         }
@@ -289,9 +291,10 @@
           } else {
             window.app.initWithState(cloudState);
           }
+          window.syncing = false;
           ready = true;
         });
-      }).catch(() => { ready = true; });
+      }).catch(() => { window.syncing = false; ready = true; });
     }
   });
 })();
