@@ -631,6 +631,42 @@ main {
 .btn-google:hover { background: var(--surface); }
 .btn-google:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.conflict-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conflict-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  text-align: left;
+}
+
+.conflict-btn:hover { border-color: var(--break); }
+
+.conflict-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.conflict-detail {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
 .sync-status {
   font-size: 0.8rem;
   color: var(--text-dim);

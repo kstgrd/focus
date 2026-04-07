@@ -185,6 +185,25 @@
     </div>
   </div>
 
+  <!-- Sync Conflict Modal -->
+  <div id="conflict-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <h2>Sync Conflict</h2>
+      <p class="modal-desc">Local and cloud data differ. Which do you want to keep?</p>
+      <div class="conflict-options">
+        <button id="conflict-local" class="btn conflict-btn">
+          <span class="conflict-label">Keep local</span>
+          <span class="conflict-detail" id="conflict-local-detail"></span>
+        </button>
+        <button id="conflict-cloud" class="btn conflict-btn">
+          <span class="conflict-label">Keep cloud</span>
+          <span class="conflict-detail" id="conflict-cloud-detail"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
