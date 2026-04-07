@@ -227,6 +227,7 @@ function getTotalTime() {
 // --- Timer ---
 function startTimer() {
   if (state.isRunning) return;
+  requestNotificationPermission();
   state.isRunning = true;
   state.startedAt = Date.now();
   state.lastUpdate = Date.now();
@@ -338,6 +339,9 @@ function completePhase() {
   state.lastUpdate = Date.now();
 
   playRingSound();
+  showNotification(state.isFocus
+    ? 'Break is over, time to focus'
+    : 'Focus time is over, time to rest');
   updateLogEntry();
   broadcastState();
   updateUI();
@@ -1001,6 +1005,28 @@ function roundedRect(ctx, x, y, w, h, r) {
   ctx.lineTo(x, y + r);
   ctx.arcTo(x, y, x + r, y, r);
   ctx.closePath();
+}
+
+// --- Notifications ---
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function showNotification(body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  // Prefer SW-based notification (survives screen off on mobile)
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'notification',
+      title: 'Pomodoro',
+      body: body
+    });
+  } else {
+    new Notification('Pomodoro', { body: body, icon: 'icon.svg' });
+  }
 }
 
 // --- PWA ---

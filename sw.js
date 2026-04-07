@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pomodoro-v7';
+const CACHE_NAME = 'pomodoro-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -21,6 +21,15 @@ self.addEventListener('activate', e => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'notification') {
+    self.registration.showNotification(e.data.title, {
+      body: e.data.body,
+      icon: 'icon.svg'
+    });
+  }
 });
 
 self.addEventListener('fetch', e => {
