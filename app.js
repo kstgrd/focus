@@ -391,7 +391,7 @@ function buildSegments() {
   let currentRow = createRow();
 
   for (let i = 0; i < totalFocus; i++) {
-    // Start new row every ROW_SIZE pomodoros
+    // Start new row every ROW_SIZE sessions
     if (i > 0 && i % ROW_SIZE === 0) {
       currentRow = createRow();
     }
@@ -491,7 +491,7 @@ function updateUI() {
 
   updateProgress(remaining);
 
-  document.title = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} ${state.isFocus ? 'Focus' : 'Break'} | Pomodoro`;
+  document.title = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} ${state.isFocus ? 'Focus' : 'Break'} | Focus`;
 }
 
 function updateProgress(remaining) {
@@ -541,9 +541,9 @@ function updateProgress(remaining) {
   const goal = settings.goal;
   const extra = state.completedPomodoros - goal;
   if (extra > 0) {
-    $progressLabel.textContent = `${goal} / ${goal} + ${extra} pomodoros`;
+    $progressLabel.textContent = `${goal} / ${goal} + ${extra} sessions`;
   } else {
-    $progressLabel.textContent = `${state.completedPomodoros} / ${goal} pomodoros`;
+    $progressLabel.textContent = `${state.completedPomodoros} / ${goal} sessions`;
   }
 
   const focusMinutes = state.completedPomodoros * settings.focusMin;
@@ -907,7 +907,7 @@ function drawChart(range) {
   const totalCompleted = data.reduce((s, d) => s + d.completed, 0);
   const totalGoal = data.reduce((s, d) => s + d.goal, 0);
   const daysWithData = data.filter(d => d.completed > 0).length;
-  $logSummary.textContent = `${totalCompleted} sessions completed across ${daysWithData} day${daysWithData !== 1 ? 's' : ''}`;
+  $logSummary.textContent = `${totalCompleted} sessions across ${daysWithData} day${daysWithData !== 1 ? 's' : ''}`;
 }
 
 function getDaysData(range, offset) {
@@ -1000,11 +1000,11 @@ function showNotification(body) {
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
       type: 'notification',
-      title: 'Pomodoro',
+      title: 'Focus',
       body: body
     });
   } else {
-    new Notification('Pomodoro', { body: body, icon: 'icon.svg' });
+    new Notification('Focus', { body: body, icon: 'icon.svg' });
   }
 }
 

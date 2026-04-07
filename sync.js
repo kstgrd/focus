@@ -178,7 +178,7 @@
     const date = s.date || '—';
     const pomos = s.completedPomodoros || 0;
     const updated = s.lastUpdate ? new Date(s.lastUpdate).toLocaleString() : '—';
-    return date + ' · ' + pomos + ' pomodoros · ' + phase + ' (' + running + ')\nUpdated: ' + updated;
+    return date + ' · ' + pomos + ' sessions · ' + phase + ' (' + running + ')\nUpdated: ' + updated;
   }
 
   function showConflictModal(localState, cloudState, callback) {

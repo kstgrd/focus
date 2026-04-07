@@ -1,7 +1,7 @@
 {
-  "name": "Pomodoro Timer",
-  "short_name": "Pomodoro",
-  "description": "P2P syncing Pomodoro timer with daily progress tracking",
+  "name": "Focus Timer",
+  "short_name": "Focus",
+  "description": "Focus timer with daily progress tracking and cloud sync",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0f0e17",
