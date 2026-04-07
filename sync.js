@@ -96,17 +96,28 @@
     setIndicator('connecting');
     $indicator.classList.remove('hidden');
 
-    // Push current state first
-    push(window.app.getState());
-
     // Subscribe to Firestore document
     const docRef = db.doc(docPath);
+    let initialLoad = true;
     unsubscribe = docRef.onSnapshot(snapshot => {
       setStatus('Connected — syncing', 'connected');
       setIndicator('connected');
 
-      if (!snapshot.exists) return;
+      if (initialLoad) {
+        initialLoad = false;
+        if (!snapshot.exists) {
+          // No data in Firebase — push local state as seed
+          push(window.app.getState());
+        } else {
+          // Firebase has data — use it as source of truth
+          applying = true;
+          window.app.applyRemoteState(snapshot.data().state);
+          applying = false;
+        }
+        return;
+      }
 
+      if (!snapshot.exists) return;
       const data = snapshot.data();
       if (data._sender === senderId) return;
       if (data.state) {

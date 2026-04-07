@@ -376,6 +376,12 @@ main {
   gap: 12px;
 }
 
+.controls-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--surface2);
+}
+
 .confirm-question {
   font-size: 0.85rem;
   color: var(--text-dim);

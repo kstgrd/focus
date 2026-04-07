@@ -174,6 +174,22 @@ $settingsBtn.addEventListener('click', () => {
 });
 $settingsClose.addEventListener('click', () => $settingsModal.classList.add('hidden'));
 $settingsBackdrop.addEventListener('click', () => $settingsModal.classList.add('hidden'));
+document.getElementById('reset-day-btn').addEventListener('click', () => showConfirm('Reset today\'s progress?', resetDay));
+
+function resetDay() {
+  stopTicking();
+  state.isFocus = true;
+  state.isRunning = false;
+  state.startedAt = null;
+  state.remainingAtStart = settings.focusMin * 60;
+  state.completedPomodoros = 0;
+  state.completedBreaks = 0;
+  state.lastUpdate = Date.now();
+  updateLogEntry();
+  buildSegments();
+  broadcastState();
+}
+
 $settingsSave.addEventListener('click', () => {
   const goal = parseInt($goalInput.value, 10);
   const focus = parseInt($focusInput.value, 10);
