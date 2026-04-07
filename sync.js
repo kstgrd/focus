@@ -278,21 +278,22 @@
 
         if (!hasConflict(localState, cloudState)) {
           applying = true;
-          window.app.applyRemoteState(cloudState);
-          applying = false;
           window.syncing = false;
+          window.app.initWithState(cloudState);
+          applying = false;
           ready = true;
           return;
         }
 
         showConflictModal(localState, cloudState, choice => {
+          window.syncing = false;
           if (choice === 'local') {
+            ready = true;
             forcePush(window.app.getState());
           } else {
             window.app.initWithState(cloudState);
+            ready = true;
           }
-          window.syncing = false;
-          ready = true;
         });
       }).catch(() => { window.syncing = false; ready = true; });
     }
