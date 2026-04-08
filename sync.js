@@ -239,25 +239,11 @@
         }
       }
 
-      // If cloud has more progress on the same day, don't overwrite
-      if (cloudState &&
-          cloudState.date === stateSnapshot.date &&
-          cloudState.completedPomodoros > stateSnapshot.completedPomodoros) {
-        return cloudState;
-      }
-
       tx.set(docRef, {
         _sender: senderId,
         state: stateSnapshot,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       });
-      return null;
-    }).then(cloudState => {
-      if (cloudState) {
-        applying = true;
-        window.app.applyRemoteState(cloudState);
-        applying = false;
-      }
     }).catch(() => {});
   }
 
