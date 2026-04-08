@@ -662,18 +662,28 @@ function broadcastState() {
 function checkDayReset() {
   const today = todayStr();
   if (state.date !== today) {
-    // Preserve yesterday's log before resetting
-    updateLogEntry();
-    stopTicking();
-    state.date = today;
-    state.completedPomodoros = 0;
-    state.completedBreaks = 0;
-    state.isFocus = true;
-    state.isRunning = false;
-    state.startedAt = null;
-    state.remainingAtStart = settings.focusMin * 60;
-  
-    updateLogEntry(); // create today's entry
+    if (state.date > today) {
+      // Stored date is ahead (UTC→local migration) — same working day, just fix the date
+      updateLogEntry();
+      // Move log entry from future date to today
+      if (log[state.date] && !log[today]) {
+        log[today] = log[state.date];
+        delete log[state.date];
+      }
+      state.date = today;
+    } else {
+      // Preserve yesterday's log before resetting
+      updateLogEntry();
+      stopTicking();
+      state.date = today;
+      state.completedPomodoros = 0;
+      state.completedBreaks = 0;
+      state.isFocus = true;
+      state.isRunning = false;
+      state.startedAt = null;
+      state.remainingAtStart = settings.focusMin * 60;
+      updateLogEntry();
+    }
   }
 }
 
