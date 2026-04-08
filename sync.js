@@ -1,7 +1,7 @@
 // --- Sync via Firebase ---
-// Firestore is the single source of truth. IndexedDB for offline/anonymous.
-// Writes use transactions (atomic read-merge-write) to prevent stale overwrites.
-// onSnapshot provides real-time updates. Conflict modal only on initial sync.
+// Firebase is the single source of truth when online.
+// Every write increments _version; stale devices detect divergence on reconnect.
+// Conflict dialog only when both local and cloud changed while disconnected.
 (function () {
   const firebaseConfig = {
     apiKey: "AIzaSyB_IwLOF83V4KAwbZCobLNuL9vLfWmh88c",
@@ -20,9 +20,12 @@
   let unsubscribe = null;
   let docPath = '';
   let senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
-  let applying = false;  // true while applying remote state, suppresses push echo
-  let ready = false;     // true once initial sync completes, gates outgoing pushes
-  let forceNext = false; // bypass transaction guard for explicit user actions (reset, keep-local)
+
+  // Sync state
+  let applying = false;    // true while applying remote state — suppresses dirty marking
+  let ready = false;       // true once sync is established — gates outgoing pushes
+  let dirty = false;       // true when local state changed since last successful sync
+  let knownVersion = 0;    // last cloud _version this device saw
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -52,13 +55,12 @@
   $signInBtn.addEventListener('click', signIn);
   $signOutBtn.addEventListener('click', signOut);
 
-  // Allow app.js to bypass the transaction guard for explicit user actions
-  window.app.forceNextPush = function() { forceNext = true; };
-
-  // --- Debounced push: local state change → transaction write ---
+  // --- Mark dirty on local changes, schedule push ---
   let pushTimeout = null;
   window.app.onStateChange(() => {
-    if (applying || !ready) return;
+    if (applying) return;
+    dirty = true;
+    if (!ready) return;
     clearTimeout(pushTimeout);
     pushTimeout = setTimeout(() => pushState(window.app.getState()), 2000);
   });
@@ -82,6 +84,8 @@
     cleanup();
     docPath = '';
     ready = false;
+    dirty = false;
+    knownVersion = 0;
     await auth.signOut();
     setIndicator('');
     $indicator.classList.add('hidden');
@@ -106,6 +110,8 @@
   function startSync(user) {
     cleanup();
     ready = false;
+    dirty = false;
+    knownVersion = 0;
     docPath = 'sync/' + user.uid;
     setStatus('Connecting...', '');
     setIndicator('connecting');
@@ -115,13 +121,19 @@
       const docRef = db.doc(docPath);
 
       docRef.get({ source: 'server' }).then(snapshot => {
-        resolveInitialSync(localData, snapshot, docRef);
+        resolveInitialSync(localData, snapshot, docRef, true);
       }).catch(() => {
         docRef.get({ source: 'cache' }).then(snapshot => {
-          resolveInitialSync(localData, snapshot, docRef);
+          resolveInitialSync(localData, snapshot, docRef, false);
           setStatus('Offline — using cached data', 'connected');
         }).catch(() => {
+          // Both server and cache unavailable — use local
+          applying = true;
           window.app.initWithState(localData);
+          applying = false;
+          if (localData && (localData.completedPomodoros > 0 || localData.isRunning)) {
+            dirty = true;
+          }
           subscribe(docRef);
           setStatus('Offline — using local data', '');
         });
@@ -129,39 +141,62 @@
     });
   }
 
-  function resolveInitialSync(localData, snapshot, docRef) {
-    const cloudState = (snapshot.exists && snapshot.data().state) ? snapshot.data().state : null;
+  function resolveInitialSync(localData, snapshot, docRef, fromServer) {
+    const doc = snapshot.exists ? snapshot.data() : null;
+    const cloudState = (doc && doc.state) ? doc.state : null;
+    const cloudVersion = (doc && doc._version) ? doc._version : 0;
 
     if (!cloudState && !localData) {
+      // First ever use — init with defaults and create cloud doc
+      applying = true;
       window.app.initWithState(null);
-      forceNext = true;
+      applying = false;
       pushState(window.app.getState());
       subscribe(docRef);
       return;
     }
 
     if (!cloudState) {
+      // No cloud doc — init with local data
+      applying = true;
       window.app.initWithState(localData);
-      forceNext = true;
-      pushState(window.app.getState());
+      applying = false;
+      if (fromServer) {
+        // Server confirmed no doc exists — safe to create it
+        pushState(window.app.getState());
+      } else {
+        // Cache miss — cloud doc might exist, push when online
+        dirty = true;
+      }
       subscribe(docRef);
       return;
     }
 
     if (!localData || !hasConflict(localData, cloudState)) {
+      // No conflict — cloud wins
+      applying = true;
       window.app.initWithState(cloudState);
+      applying = false;
+      knownVersion = cloudVersion;
       subscribe(docRef);
+      pushIfChanged(cloudState);
       return;
     }
 
     // Real conflict — prompt user
+    applying = true;
     window.app.initWithState(localData);
+    applying = false;
     showConflictModal(localData, cloudState, choice => {
       if (choice === 'local') {
-        forceNext = true;
+        knownVersion = cloudVersion;
         pushState(window.app.getState());
       } else {
+        applying = true;
         window.app.initWithState(cloudState);
+        applying = false;
+        knownVersion = cloudVersion;
+        dirty = false;
       }
       subscribe(docRef);
     });
@@ -173,8 +208,17 @@
     if (local.date !== cloud.date) return true;
     if (local.completedPomodoros !== cloud.completedPomodoros) return true;
     if (local.isFocus !== cloud.isFocus) return true;
-    if (local.isRunning !== cloud.isRunning) return true;
     return false;
+  }
+
+  // Push back if state changed from what cloud had (e.g. timer completed during reconstruction)
+  function pushIfChanged(cloudState) {
+    const current = window.app.getState();
+    if (current.completedPomodoros !== cloudState.completedPomodoros ||
+        current.isRunning !== cloudState.isRunning ||
+        current.isFocus !== cloudState.isFocus) {
+      pushState(current);
+    }
   }
 
   // --- Conflict modal ---
@@ -207,7 +251,6 @@
 
   // --- Real-time listener ---
   function subscribe(docRef) {
-    // Clean up old listener before re-subscribing
     if (unsubscribe) {
       unsubscribe();
       unsubscribe = null;
@@ -220,68 +263,169 @@
     unsubscribe = docRef.onSnapshot(snapshot => {
       if (!snapshot.exists || !snapshot.data().state) return;
       const data = snapshot.data();
-      if (data._sender === senderId) return;
+      const cloudVer = data._version || 0;
+
+      if (data._sender === senderId) {
+        // Our own write echoed back — just track version
+        knownVersion = cloudVer;
+        return;
+      }
+
+      // Remote update — cancel any pending local push, accept cloud as truth
+      clearTimeout(pushTimeout);
+      pushTimeout = null;
+
       applying = true;
       window.app.applyRemoteState(data.state);
       applying = false;
+
+      knownVersion = cloudVer;
+      dirty = false;
     }, err => {
       setStatus('Sync error: ' + err.message, 'error');
       setIndicator('error');
     });
   }
 
-  // --- Write: Firestore transaction (atomic read-merge-write) ---
-  // Reads cloud first, merges logs. Guards against stale overwrites unless forced.
+  // --- Write: Firestore transaction with version increment ---
   function pushState(stateSnapshot) {
     if (!docPath || !auth.currentUser) return;
     const docRef = db.doc(docPath);
-    const force = forceNext;
-    forceNext = false;
 
-    db.runTransaction(async tx => {
-      const snapshot = await tx.get(docRef);
-      const cloudState = (snapshot.exists && snapshot.data().state) ? snapshot.data().state : null;
+    db.runTransaction(tx => {
+      return tx.get(docRef).then(snapshot => {
+        const doc = snapshot.exists ? snapshot.data() : null;
+        const cloudVersion = (doc && doc._version) ? doc._version : 0;
+        const cloudState = (doc && doc.state) ? doc.state : null;
 
-      // Merge logs — always keep the highest count per day
-      if (cloudState && cloudState.log) {
-        if (!stateSnapshot.log) stateSnapshot.log = {};
-        for (const [date, entry] of Object.entries(cloudState.log)) {
-          if (!stateSnapshot.log[date]) {
-            stateSnapshot.log[date] = entry;
-          } else if (entry.completed > stateSnapshot.log[date].completed) {
-            stateSnapshot.log[date].completed = entry.completed;
+        // Merge logs — always keep highest count per day
+        if (cloudState && cloudState.log) {
+          if (!stateSnapshot.log) stateSnapshot.log = {};
+          for (const [date, entry] of Object.entries(cloudState.log)) {
+            if (!stateSnapshot.log[date]) {
+              stateSnapshot.log[date] = entry;
+            } else if (entry.completed > stateSnapshot.log[date].completed) {
+              stateSnapshot.log[date].completed = entry.completed;
+            }
           }
         }
-      }
 
-      // Guard: if cloud has more progress on the same day, don't overwrite
-      // (prevents stale device from wiping newer cloud state)
-      // Bypassed for explicit user actions (reset, keep-local) via forceNext flag
-      if (!force && cloudState &&
-          cloudState.date === stateSnapshot.date &&
-          cloudState.completedPomodoros > stateSnapshot.completedPomodoros) {
-        return cloudState;
-      }
-
-      tx.set(docRef, {
-        _sender: senderId,
-        state: stateSnapshot,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        const newVersion = cloudVersion + 1;
+        tx.set(docRef, {
+          _sender: senderId,
+          _version: newVersion,
+          state: stateSnapshot,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return newVersion;
       });
-      return null;
-    }).then(cloudState => {
-      // If cloud was ahead, apply it locally
-      if (cloudState) {
-        applying = true;
-        window.app.applyRemoteState(cloudState);
-        applying = false;
-      }
+    }).then(newVersion => {
+      knownVersion = newVersion;
+      dirty = false;
     }).catch(() => {});
+  }
+
+  // --- Resync: fetch cloud on wake/reconnect ---
+  // Prevents stale local state from overwriting newer cloud data.
+  // Re-subscribes onSnapshot in case it died while sleeping/offline.
+  function resync() {
+    if (!docPath || !auth.currentUser) {
+      window.app.onWake();
+      return;
+    }
+
+    if (!ready) return; // already syncing
+
+    ready = false;
+    clearTimeout(pushTimeout);
+    pushTimeout = null;
+    const $spin = document.getElementById('sync-spin');
+    $spin.classList.remove('hidden');
+
+    const docRef = db.doc(docPath);
+    docRef.get({ source: 'server' }).then(snapshot => {
+      $spin.classList.add('hidden');
+
+      if (!snapshot.exists || !snapshot.data().state) {
+        // No cloud doc — push local if dirty
+        subscribe(docRef);
+        if (dirty) pushState(window.app.getState());
+        else window.app.onWake();
+        return;
+      }
+
+      const cloudVersion = snapshot.data()._version || 0;
+      const cloudState = snapshot.data().state;
+
+      if (cloudVersion === knownVersion) {
+        // Cloud unchanged since we last saw it
+        subscribe(docRef);
+        if (dirty) {
+          // We changed while away — safe to push (no conflict)
+          pushState(window.app.getState());
+        } else {
+          // Nothing changed on either side — just catch up timer
+          window.app.onWake();
+        }
+        return;
+      }
+
+      // Cloud changed (newer version than what we know)
+      if (!dirty) {
+        // We didn't change — accept cloud
+        applying = true;
+        window.app.initWithState(cloudState);
+        applying = false;
+        knownVersion = cloudVersion;
+        subscribe(docRef);
+        // Push back if timer completed during reconstruction
+        pushIfChanged(cloudState);
+        return;
+      }
+
+      // CONFLICT: both sides changed while disconnected
+      showConflictModal(window.app.getState(), cloudState, choice => {
+        if (choice === 'local') {
+          knownVersion = cloudVersion;
+          pushState(window.app.getState());
+        } else {
+          applying = true;
+          window.app.initWithState(cloudState);
+          applying = false;
+          knownVersion = cloudVersion;
+          dirty = false;
+        }
+        subscribe(docRef);
+      });
+    }).catch(() => {
+      $spin.classList.add('hidden');
+
+      if (!dirty) {
+        // No local changes — try cache for display only
+        docRef.get({ source: 'cache' }).then(snapshot => {
+          if (snapshot.exists && snapshot.data().state) {
+            applying = true;
+            window.app.initWithState(snapshot.data().state);
+            applying = false;
+            // Don't update knownVersion from cache — it may be stale
+          }
+          subscribe(docRef);
+        }).catch(() => {
+          ready = true;
+          window.app.onWake();
+        });
+      } else {
+        // Has local changes — keep them, just re-subscribe and wait for network
+        subscribe(docRef);
+        window.app.onWake();
+      }
+    });
   }
 
   // --- Cleanup ---
   function cleanup() {
     clearTimeout(pushTimeout);
+    pushTimeout = null;
     if (unsubscribe) {
       unsubscribe();
       unsubscribe = null;
@@ -308,67 +452,14 @@
       cleanup();
       docPath = '';
       ready = false;
+      dirty = false;
+      knownVersion = 0;
       $indicator.classList.add('hidden');
       window.app.loadLocal().then(data => {
         window.app.initWithState(data);
       });
     }
   });
-
-  // --- Re-sync: fetch fresh cloud state and re-subscribe listener ---
-  // Triggered on wake (visibilitychange) and network reconnect (online).
-  // Prevents stale local state from overwriting newer cloud data.
-  // Also re-subscribes the onSnapshot listener in case it died silently.
-  function resync() {
-    if (!docPath || !auth.currentUser) {
-      window.app.onWake();
-      return;
-    }
-
-    if (!ready) return; // Already syncing
-
-    ready = false;
-    clearTimeout(pushTimeout);
-    const $spin = document.getElementById('sync-spin');
-    $spin.classList.remove('hidden');
-
-    const docRef = db.doc(docPath);
-    docRef.get({ source: 'server' }).then(snapshot => {
-      $spin.classList.add('hidden');
-
-      if (!snapshot.exists || !snapshot.data().state) {
-        subscribe(docRef); // re-subscribe listener
-        window.app.onWake();
-        return;
-      }
-
-      // Apply cloud state via full init (rebuilds segments, reconstructs timer)
-      applying = true;
-      window.app.initWithState(snapshot.data().state);
-      applying = false;
-
-      // Re-subscribe listener in case it died while offline/sleeping
-      subscribe(docRef);
-
-      // Push back in case timer completed during init (guard prevents stale overwrite)
-      pushState(window.app.getState());
-    }).catch(() => {
-      $spin.classList.add('hidden');
-
-      // Server unreachable — try cache before giving up
-      docRef.get({ source: 'cache' }).then(snapshot => {
-        if (snapshot.exists && snapshot.data().state) {
-          applying = true;
-          window.app.initWithState(snapshot.data().state);
-          applying = false;
-        }
-        subscribe(docRef); // re-subscribe listener
-      }).catch(() => {
-        ready = true;
-        window.app.onWake();
-      });
-    });
-  }
 
   // Re-sync on tab wake and network reconnect
   document.addEventListener('visibilitychange', () => {

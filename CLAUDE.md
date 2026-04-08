@@ -14,11 +14,19 @@
 - Firestore security rules require authentication (`request.auth != null`)
 
 ## Sync Strategy
-- **Writes use Firestore transactions** (`db.runTransaction`): atomic read-merge-write prevents stale overwrites
+- **Version counter** (`_version`): every Firestore write increments `_version`; devices track `knownVersion` to detect divergence
+- **Dirty flag**: `dirty` is set when local state changes (suppressed during cloud-apply via `applying` flag); only dirty devices attempt pushes
+- **Firebase is truth when online**: `onSnapshot` updates are applied immediately, cancelling any pending local push
+- **Writes use Firestore transactions** (`db.runTransaction`): atomic read-merge-write with version increment
 - **Logs are append-only**: merged on every write/read, keeping highest count per day
-- **Transaction guards progress**: if cloud has more completedPomodoros, skip write and apply cloud locally
-- **Wake behavior**: sync.js owns `visibilitychange` — fetches cloud via `initWithState` before any local timer logic runs, then pushes back if timer completed during init
-- **Conflict modal**: only shown on initial sync when both sides have meaningful work; fresh/reset state is never a conflict
+- **Wake/reconnect (`resync`)**: fetches cloud from server, compares `_version` vs `knownVersion`:
+  - Cloud unchanged + dirty → push local (no conflict)
+  - Cloud changed + not dirty → accept cloud
+  - Cloud changed + dirty → **conflict dialog** (only case it appears)
+  - Server unreachable + not dirty → apply cache for display, don't push
+  - Server unreachable + dirty → keep local changes, wait for network
+- **Initial sync**: `fromServer` flag distinguishes server vs cache snapshots — only creates cloud doc when server confirms it doesn't exist (prevents stale cache-miss from force-pushing)
+- **Conflict modal**: only shown when both local and cloud diverged while offline; fresh/reset state is never a conflict
 - **`completePhase` is idempotent**: checks `isRunning` before mutating, safe if multiple devices race
 
 ## State Management (`app.js`)
