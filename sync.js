@@ -164,7 +164,7 @@
   }
 
   function hasConflict(local, cloud) {
-    if (local.version === 0 && local.completedPomodoros === 0) return false;
+    if (local.completedPomodoros === 0 && local.completedBreaks === 0) return false;
     if (local.date !== cloud.date) return true;
     if (local.completedPomodoros !== cloud.completedPomodoros) return true;
     if (local.isFocus !== cloud.isFocus) return true;
