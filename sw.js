@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pomodoro-v8';
+const CACHE_NAME = 'pomodoro-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -30,6 +30,18 @@ self.addEventListener('message', e => {
       icon: 'icon.svg'
     });
   }
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      if (clients.length) {
+        return clients[0].focus();
+      }
+      return self.clients.openWindow('./');
+    })
+  );
 });
 
 self.addEventListener('fetch', e => {
