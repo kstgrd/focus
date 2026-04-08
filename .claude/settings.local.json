@@ -6,7 +6,12 @@
       "Bash(gh api:*)",
       "Bash(npm install:*)",
       "WebSearch",
-      "WebFetch(domain:firebase.google.com)"
+      "WebFetch(domain:firebase.google.com)",
+      "Bash(grep -E \"\\\\.\\(json|js|ts\\)$\")",
+      "Bash(find:*)",
+      "Bash(git -C /c/Users/kstgrd/sync/timer log --oneline)",
+      "Bash(npx vitest:*)",
+      "Bash(git rm:*)"
     ]
   }
 }

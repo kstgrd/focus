@@ -62,7 +62,10 @@
     dirty = true;
     if (!ready) return;
     clearTimeout(pushTimeout);
-    pushTimeout = setTimeout(() => pushState(window.app.getState()), 2000);
+    pushTimeout = setTimeout(() => {
+      if (!ready) return;  // resync may have started — don't push stale state
+      pushState(window.app.getState());
+    }, 2000);
   });
 
   // --- Auth ---
@@ -288,6 +291,10 @@
   }
 
   // --- Write: Firestore transaction with version increment ---
+  // Reads cloud first. If cloud version is ahead of knownVersion, this device
+  // missed updates — abort the write and apply cloud locally instead.
+  // This is the ultimate safety net: even if a stale debounce timer fires,
+  // the transaction detects the staleness and refuses to overwrite.
   function pushState(stateSnapshot) {
     if (!docPath || !auth.currentUser) return;
     const docRef = db.doc(docPath);
@@ -297,6 +304,11 @@
         const doc = snapshot.exists ? snapshot.data() : null;
         const cloudVersion = (doc && doc._version) ? doc._version : 0;
         const cloudState = (doc && doc.state) ? doc.state : null;
+
+        // Guard: cloud advanced past what we know — this push is stale
+        if (cloudVersion > knownVersion && cloudState) {
+          return { stale: true, cloudState: cloudState, cloudVersion: cloudVersion };
+        }
 
         // Merge logs — always keep highest count per day
         if (cloudState && cloudState.log) {
@@ -317,11 +329,20 @@
           state: stateSnapshot,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
-        return newVersion;
+        return { stale: false, newVersion: newVersion };
       });
-    }).then(newVersion => {
-      knownVersion = newVersion;
-      dirty = false;
+    }).then(result => {
+      if (result.stale) {
+        // Cloud was ahead — apply it locally instead of writing
+        applying = true;
+        window.app.applyRemoteState(result.cloudState);
+        applying = false;
+        knownVersion = result.cloudVersion;
+        dirty = false;
+      } else {
+        knownVersion = result.newVersion;
+        dirty = false;
+      }
     }).catch(() => {});
   }
 
@@ -461,9 +482,15 @@
     }
   });
 
-  // Re-sync on tab wake and network reconnect
+  // Re-sync on tab wake and network reconnect.
+  // Clear pending pushes on hide — prevents frozen timeouts from firing stale writes on wake.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') resync();
+    if (document.visibilityState === 'hidden') {
+      clearTimeout(pushTimeout);
+      pushTimeout = null;
+    } else {
+      resync();
+    }
   });
   window.addEventListener('online', resync);
 })();
