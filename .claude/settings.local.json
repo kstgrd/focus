@@ -4,7 +4,9 @@
       "Bash(npx serve:*)",
       "Bash(mkdir:*)",
       "Bash(gh api:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "WebSearch",
+      "WebFetch(domain:firebase.google.com)"
     ]
   }
 }

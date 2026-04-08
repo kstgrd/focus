@@ -66,6 +66,8 @@ window.app = {
   getState: function() { return { ...state, settings: { ...settings }, log: { ...log } }; },
   getLog: function() { return log; },
   loadLocal: function() { return localDB.load(); },
+  // Called by sync.js on wake when not signed in
+  onWake: function() { reconstructTimer(); updateUI(); },
   // Called by sync.js once Firebase state is loaded (or defaults if first-ever sync)
   initWithState: function(remoteState) {
     if (remoteState) {
@@ -301,12 +303,12 @@ function scheduleCompletion() {
   clearTimeout(completionTimeout);
   if (!state.isRunning) return;
   const ms = getTimeRemaining() * 1000;
-  if (ms <= 0 && !window.syncing) {
+  if (ms <= 0) {
     completePhase();
     return;
   }
   completionTimeout = setTimeout(() => {
-    if (state.isRunning && !window.syncing) completePhase();
+    if (state.isRunning) completePhase();
   }, ms);
 }
 
@@ -318,15 +320,9 @@ function tick() {
   updateUI();
 }
 
-// Catch up immediately when tab becomes visible again
-// (skipped while sync.js is fetching fresh cloud state)
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.isRunning && !window.syncing) {
-    tick();
-  }
-});
-
 function completePhase() {
+  if (!state.isRunning) return; // Already completed (e.g. by another device via onSnapshot)
+
   stopTicking();
   state.isRunning = false;
   state.startedAt = null;
@@ -341,7 +337,6 @@ function completePhase() {
 
   state.isFocus = !state.isFocus;
   state.remainingAtStart = getTotalTime();
-
 
   playRingSound();
   showNotification(state.isFocus
@@ -1029,24 +1024,9 @@ function applyRemoteState(remote) {
   doApplyRemoteState(remote);
 }
 
-// Merge remote log into local. Returns true if local had entries remote was missing.
+// Merge remote log into local — keep the highest count per day (append-only).
 function mergeLog(remoteLog) {
-  if (!remoteLog) return false;
-  let localHadExtra = false;
-
-  // Check if we have entries remote doesn't
-  for (const date of Object.keys(log)) {
-    if (!remoteLog[date]) {
-      localHadExtra = true;
-      break;
-    }
-    if (log[date].completed > (remoteLog[date]?.completed || 0)) {
-      localHadExtra = true;
-      break;
-    }
-  }
-
-  // Merge remote into local
+  if (!remoteLog) return;
   for (const [date, entry] of Object.entries(remoteLog)) {
     if (!log[date]) {
       log[date] = entry;
@@ -1054,8 +1034,6 @@ function mergeLog(remoteLog) {
       log[date].completed = entry.completed;
     }
   }
-
-  return localHadExtra;
 }
 
 function doApplyRemoteState(remote) {

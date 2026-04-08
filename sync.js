@@ -1,6 +1,7 @@
 // --- Sync via Firebase ---
-// Firebase is the single source of truth. IndexedDB for anonymous/offline.
-// On conflict (local vs cloud differ): prompt user to choose.
+// Firestore is the single source of truth. IndexedDB for offline/anonymous.
+// Writes use transactions (atomic read-merge-write) to prevent stale overwrites.
+// onSnapshot provides real-time updates. Conflict modal only on initial sync.
 (function () {
   const firebaseConfig = {
     apiKey: "AIzaSyB_IwLOF83V4KAwbZCobLNuL9vLfWmh88c",
@@ -19,8 +20,8 @@
   let unsubscribe = null;
   let docPath = '';
   let senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
-  let applying = false;
-  let ready = false;
+  let applying = false;  // true while applying remote state, suppresses push echo
+  let ready = false;     // true once initial sync completes, gates outgoing pushes
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -39,7 +40,6 @@
   const $conflictCloud = document.getElementById('conflict-cloud');
   const $conflictLocalDetail = document.getElementById('conflict-local-detail');
   const $conflictCloudDetail = document.getElementById('conflict-cloud-detail');
-  const $conflictBackdrop = $conflictModal.querySelector('.modal-backdrop');
 
   // Events
   $syncBtn.addEventListener('click', () => {
@@ -51,14 +51,15 @@
   $signInBtn.addEventListener('click', signIn);
   $signOutBtn.addEventListener('click', signOut);
 
-  // On every LOCAL state change -> debounced push (only when ready)
+  // --- Debounced push: local state change → transaction write ---
   let pushTimeout = null;
   window.app.onStateChange(() => {
     if (applying || !ready) return;
     clearTimeout(pushTimeout);
-    pushTimeout = setTimeout(() => forcePush(window.app.getState()), 2000);
+    pushTimeout = setTimeout(() => pushState(window.app.getState()), 2000);
   });
 
+  // --- Auth ---
   async function signIn() {
     try {
       $signInBtn.disabled = true;
@@ -97,6 +98,7 @@
     }
   }
 
+  // --- Initial sync (on sign-in / page load) ---
   function startSync(user) {
     cleanup();
     ready = false;
@@ -105,7 +107,6 @@
     setIndicator('connecting');
     $indicator.classList.remove('hidden');
 
-    // Load local IndexedDB data first, then fetch cloud
     window.app.loadLocal().then(localData => {
       const docRef = db.doc(docPath);
 
@@ -116,7 +117,6 @@
           resolveInitialSync(localData, snapshot, docRef);
           setStatus('Offline — using cached data', 'connected');
         }).catch(() => {
-          // No cloud at all — use local or defaults
           window.app.initWithState(localData);
           subscribe(docRef);
           setStatus('Offline — using local data', '');
@@ -129,33 +129,30 @@
     const cloudState = (snapshot.exists && snapshot.data().state) ? snapshot.data().state : null;
 
     if (!cloudState && !localData) {
-      // Both empty — init defaults, seed cloud
       window.app.initWithState(null);
-      forcePush(window.app.getState());
+      pushState(window.app.getState());
       subscribe(docRef);
       return;
     }
 
     if (!cloudState) {
-      // No cloud — use local, seed cloud
       window.app.initWithState(localData);
-      forcePush(window.app.getState());
+      pushState(window.app.getState());
       subscribe(docRef);
       return;
     }
 
     if (!localData || !hasConflict(localData, cloudState)) {
-      // No local or no conflict — use cloud
       window.app.initWithState(cloudState);
       subscribe(docRef);
       return;
     }
 
-    // Conflict — show page with local data, prompt user
+    // Real conflict — prompt user
     window.app.initWithState(localData);
     showConflictModal(localData, cloudState, choice => {
       if (choice === 'local') {
-        forcePush(window.app.getState());
+        pushState(window.app.getState());
       } else {
         window.app.initWithState(cloudState);
       }
@@ -164,6 +161,7 @@
   }
 
   function hasConflict(local, cloud) {
+    // Fresh local state is never a conflict
     if (local.completedPomodoros === 0 && local.completedBreaks === 0) return false;
     if (local.date !== cloud.date) return true;
     if (local.completedPomodoros !== cloud.completedPomodoros) return true;
@@ -172,6 +170,7 @@
     return false;
   }
 
+  // --- Conflict modal ---
   function stateDescription(s) {
     const phase = s.isFocus ? 'Focus' : 'Break';
     const running = s.isRunning ? 'running' : 'paused';
@@ -199,6 +198,7 @@
     $conflictCloud.addEventListener('click', onCloud);
   }
 
+  // --- Real-time listener ---
   function subscribe(docRef) {
     ready = true;
     setStatus('Connected — syncing', 'connected');
@@ -217,15 +217,51 @@
     });
   }
 
-  function forcePush(stateSnapshot) {
+  // --- Write: Firestore transaction (atomic read-merge-write) ---
+  // Reads cloud first, merges logs, skips write if cloud is ahead.
+  function pushState(stateSnapshot) {
     if (!docPath || !auth.currentUser) return;
-    db.doc(docPath).set({
-      _sender: senderId,
-      state: stateSnapshot,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    const docRef = db.doc(docPath);
+
+    db.runTransaction(async tx => {
+      const snapshot = await tx.get(docRef);
+      const cloudState = (snapshot.exists && snapshot.data().state) ? snapshot.data().state : null;
+
+      // Merge logs — always keep the highest count per day
+      if (cloudState && cloudState.log) {
+        if (!stateSnapshot.log) stateSnapshot.log = {};
+        for (const [date, entry] of Object.entries(cloudState.log)) {
+          if (!stateSnapshot.log[date]) {
+            stateSnapshot.log[date] = entry;
+          } else if (entry.completed > stateSnapshot.log[date].completed) {
+            stateSnapshot.log[date].completed = entry.completed;
+          }
+        }
+      }
+
+      // If cloud has more progress on the same day, don't overwrite
+      if (cloudState &&
+          cloudState.date === stateSnapshot.date &&
+          cloudState.completedPomodoros > stateSnapshot.completedPomodoros) {
+        return cloudState;
+      }
+
+      tx.set(docRef, {
+        _sender: senderId,
+        state: stateSnapshot,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      return null;
+    }).then(cloudState => {
+      if (cloudState) {
+        applying = true;
+        window.app.applyRemoteState(cloudState);
+        applying = false;
+      }
     }).catch(() => {});
   }
 
+  // --- Cleanup ---
   function cleanup() {
     clearTimeout(pushTimeout);
     if (unsubscribe) {
@@ -234,6 +270,7 @@
     }
   }
 
+  // --- UI helpers ---
   function setStatus(text, cls) {
     $status.textContent = text;
     $status.className = 'sync-status' + (cls ? ' ' + cls : '');
@@ -244,7 +281,7 @@
     if (state) $indicator.classList.add(state);
   }
 
-  // Auth state listener
+  // --- Auth state listener ---
   auth.onAuthStateChanged(user => {
     updateAuthUI();
     if (user) {
@@ -260,42 +297,46 @@
     }
   });
 
-  // On wake: re-sync with Firebase
-  // Pause pushes until we've fetched the latest cloud state to avoid
-  // overwriting newer data with stale local state (e.g. phone waking up
-  // after PC already completed the session).
+  // --- Wake handler (sync.js owns all visibility change behavior) ---
+  // On wake: fetch fresh cloud state before any local timer logic runs.
+  // This prevents stale local state from overwriting newer cloud data.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && ready && docPath && auth.currentUser) {
-      ready = false;
-      window.syncing = true;
-      clearTimeout(pushTimeout);
-      window.app.showToast('Syncing…');
-      const docRef = db.doc(docPath);
-      docRef.get({ source: 'server' }).then(snapshot => {
-        if (!snapshot.exists || !snapshot.data().state) { window.syncing = false; ready = true; return; }
-        const cloudState = snapshot.data().state;
-        const localState = window.app.getState();
+    if (document.visibilityState !== 'visible') return;
 
-        if (!hasConflict(localState, cloudState)) {
-          applying = true;
-          window.syncing = false;
-          window.app.initWithState(cloudState);
-          applying = false;
-          ready = true;
-          return;
-        }
-
-        showConflictModal(localState, cloudState, choice => {
-          window.syncing = false;
-          if (choice === 'local') {
-            ready = true;
-            forcePush(window.app.getState());
-          } else {
-            window.app.initWithState(cloudState);
-            ready = true;
-          }
-        });
-      }).catch(() => { window.syncing = false; ready = true; });
+    if (!docPath || !auth.currentUser) {
+      // Not signed in — just catch up the local timer
+      window.app.onWake();
+      return;
     }
+
+    if (!ready) return; // Already syncing
+
+    ready = false;
+    clearTimeout(pushTimeout);
+    const $spin = document.getElementById('sync-spin');
+    $spin.classList.remove('hidden');
+
+    const docRef = db.doc(docPath);
+    docRef.get({ source: 'server' }).then(snapshot => {
+      $spin.classList.add('hidden');
+      if (!snapshot.exists || !snapshot.data().state) {
+        ready = true;
+        window.app.onWake();
+        return;
+      }
+
+      // Apply cloud state via full init (rebuilds segments, reconstructs timer)
+      applying = true;
+      window.app.initWithState(snapshot.data().state);
+      applying = false;
+      ready = true;
+
+      // Push back in case timer completed during init (transaction prevents stale overwrite)
+      pushState(window.app.getState());
+    }).catch(() => {
+      $spin.classList.add('hidden');
+      ready = true;
+      window.app.onWake();
+    });
   });
 })();
