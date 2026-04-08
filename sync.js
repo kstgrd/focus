@@ -22,6 +22,7 @@
   let senderId = 'pomo-' + Math.random().toString(36).slice(2, 10);
   let applying = false;  // true while applying remote state, suppresses push echo
   let ready = false;     // true once initial sync completes, gates outgoing pushes
+  let forceNext = false; // bypass transaction guard for explicit user actions (reset, keep-local)
 
   // DOM
   const $modal = document.getElementById('sync-modal');
@@ -50,6 +51,9 @@
   $backdrop.addEventListener('click', () => $modal.classList.add('hidden'));
   $signInBtn.addEventListener('click', signIn);
   $signOutBtn.addEventListener('click', signOut);
+
+  // Allow app.js to bypass the transaction guard for explicit user actions
+  window.app.forceNextPush = function() { forceNext = true; };
 
   // --- Debounced push: local state change → transaction write ---
   let pushTimeout = null;
@@ -130,6 +134,7 @@
 
     if (!cloudState && !localData) {
       window.app.initWithState(null);
+      forceNext = true;
       pushState(window.app.getState());
       subscribe(docRef);
       return;
@@ -137,6 +142,7 @@
 
     if (!cloudState) {
       window.app.initWithState(localData);
+      forceNext = true;
       pushState(window.app.getState());
       subscribe(docRef);
       return;
@@ -152,6 +158,7 @@
     window.app.initWithState(localData);
     showConflictModal(localData, cloudState, choice => {
       if (choice === 'local') {
+        forceNext = true;
         pushState(window.app.getState());
       } else {
         window.app.initWithState(cloudState);
@@ -200,6 +207,12 @@
 
   // --- Real-time listener ---
   function subscribe(docRef) {
+    // Clean up old listener before re-subscribing
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
+
     ready = true;
     setStatus('Connected — syncing', 'connected');
     setIndicator('connected');
@@ -218,10 +231,12 @@
   }
 
   // --- Write: Firestore transaction (atomic read-merge-write) ---
-  // Reads cloud first, merges logs, skips write if cloud is ahead.
+  // Reads cloud first, merges logs. Guards against stale overwrites unless forced.
   function pushState(stateSnapshot) {
     if (!docPath || !auth.currentUser) return;
     const docRef = db.doc(docPath);
+    const force = forceNext;
+    forceNext = false;
 
     db.runTransaction(async tx => {
       const snapshot = await tx.get(docRef);
@@ -239,11 +254,28 @@
         }
       }
 
+      // Guard: if cloud has more progress on the same day, don't overwrite
+      // (prevents stale device from wiping newer cloud state)
+      // Bypassed for explicit user actions (reset, keep-local) via forceNext flag
+      if (!force && cloudState &&
+          cloudState.date === stateSnapshot.date &&
+          cloudState.completedPomodoros > stateSnapshot.completedPomodoros) {
+        return cloudState;
+      }
+
       tx.set(docRef, {
         _sender: senderId,
         state: stateSnapshot,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       });
+      return null;
+    }).then(cloudState => {
+      // If cloud was ahead, apply it locally
+      if (cloudState) {
+        applying = true;
+        window.app.applyRemoteState(cloudState);
+        applying = false;
+      }
     }).catch(() => {});
   }
 
@@ -283,14 +315,12 @@
     }
   });
 
-  // --- Wake handler (sync.js owns all visibility change behavior) ---
-  // On wake: fetch fresh cloud state before any local timer logic runs.
-  // This prevents stale local state from overwriting newer cloud data.
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
-
+  // --- Re-sync: fetch fresh cloud state and re-subscribe listener ---
+  // Triggered on wake (visibilitychange) and network reconnect (online).
+  // Prevents stale local state from overwriting newer cloud data.
+  // Also re-subscribes the onSnapshot listener in case it died silently.
+  function resync() {
     if (!docPath || !auth.currentUser) {
-      // Not signed in — just catch up the local timer
       window.app.onWake();
       return;
     }
@@ -305,8 +335,9 @@
     const docRef = db.doc(docPath);
     docRef.get({ source: 'server' }).then(snapshot => {
       $spin.classList.add('hidden');
+
       if (!snapshot.exists || !snapshot.data().state) {
-        ready = true;
+        subscribe(docRef); // re-subscribe listener
         window.app.onWake();
         return;
       }
@@ -315,14 +346,33 @@
       applying = true;
       window.app.initWithState(snapshot.data().state);
       applying = false;
-      ready = true;
 
-      // Push back in case timer completed during init (transaction prevents stale overwrite)
+      // Re-subscribe listener in case it died while offline/sleeping
+      subscribe(docRef);
+
+      // Push back in case timer completed during init (guard prevents stale overwrite)
       pushState(window.app.getState());
     }).catch(() => {
       $spin.classList.add('hidden');
-      ready = true;
-      window.app.onWake();
+
+      // Server unreachable — try cache before giving up
+      docRef.get({ source: 'cache' }).then(snapshot => {
+        if (snapshot.exists && snapshot.data().state) {
+          applying = true;
+          window.app.initWithState(snapshot.data().state);
+          applying = false;
+        }
+        subscribe(docRef); // re-subscribe listener
+      }).catch(() => {
+        ready = true;
+        window.app.onWake();
+      });
     });
+  }
+
+  // Re-sync on tab wake and network reconnect
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') resync();
   });
+  window.addEventListener('online', resync);
 })();

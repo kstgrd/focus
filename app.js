@@ -195,6 +195,7 @@ function resetDay() {
 
   updateLogEntry();
   buildSegments();
+  if (window.app.forceNextPush) window.app.forceNextPush();
   broadcastState();
 }
 
